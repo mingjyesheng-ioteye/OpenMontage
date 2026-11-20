@@ -155,10 +155,22 @@ Both clips came back with `h264` video and **32 kHz stereo AAC**; `ffprobe`
 confirmed size, fps, frame count, and audio. Image output was measured from the
 PNG header (768×512).
 
-**Speed tradeoff:** on this GPU the Studio's `sd_cpp` H3 path is roughly 5–8×
-slower than ComfyUI's ROCm PyTorch path (ComfyUI: 640×384/39 frames/8 steps in
-~2 min). Studio is faster for images (12.6 s warm vs ~30–50 s in ComfyUI). Use
-Studio for images and heavy-memory convenience, ComfyUI for H3 video throughput.
+**Speed tradeoff:** normalised for pixels and frames, the Studio's `sd_cpp` H3
+path is roughly **2–2.5× slower** than ComfyUI's ROCm PyTorch path on this GPU
+(ComfyUI: 640×384 / 39 frames / 8 steps in ~84 s; Studio: 960×544 / 124 frames /
+8 steps in ~21 min). Studio is faster for images (12.6 s warm vs ~30–50 s in
+ComfyUI). Use Studio for images and memory convenience, ComfyUI when H3
+throughput matters.
+
+**Speeding up H3:**
+
+- **8 steps** is the distilled setting (CFG-free; unsloth's own example uses 8).
+  20 steps is ~2.5× the render for little gain.
+- Use a trained size — **960×544** or **864×480** — instead of 1344×768
+  (~2× fewer pixels). Omit width/height to take the family preset.
+- **124 frames (5.2 s) is the minimum.** Shorter clips are not supported; trim in
+  the edit stage instead.
+- Image ↔ video switches reload tens of GB; keep one family loaded per session.
 
 The adapter contract is also covered by a stub-server test (auth rejection, b64
 image decode, lattice/dimension snapping, first-frame data URLs, progress
