@@ -120,10 +120,18 @@ class TestPiperTTS:
         assert "offline_generation" in tool.capabilities
 
     def test_status_requires_piper_executable_even_if_python_package_imports(
-        self, monkeypatch
+        self, monkeypatch, tmp_path
     ):
         """F-12 regression: Piper generation shells out to `piper`, so importing
-        the Python package is not enough to mark the provider available."""
+        the Python package is not enough to mark the provider available.
+
+        Neither PATH nor the interpreter's sibling directory may hold a `piper`
+        executable: a venv usually has one next to `sys.executable`, so the
+        test points the interpreter at an empty directory to model a host with
+        no piper at all.
+        """
+        import sys
+
         original_import = builtins.__import__
         original_which = shutil.which
 
@@ -135,9 +143,26 @@ class TestPiperTTS:
         monkeypatch.setattr(
             shutil, "which", lambda cmd: None if cmd == "piper" else original_which(cmd)
         )
+        monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
         assert PiperTTS().get_status() == ToolStatus.UNAVAILABLE
+
+    def test_status_finds_piper_next_to_the_interpreter(self, monkeypatch, tmp_path):
+        """A venv keeps console scripts beside its python; running the venv
+        python by absolute path should still see them."""
+        import sys
+
+        binary = tmp_path / "piper"
+        binary.write_text("#!/bin/sh\n", encoding="utf-8")
+        binary.chmod(0o755)
+        interpreter = tmp_path / "python"
+        interpreter.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(shutil, "which", lambda cmd: None)
+        monkeypatch.setattr(sys, "executable", str(interpreter))
+
+        assert PiperTTS().get_status() == ToolStatus.AVAILABLE
 
 
 class TestGoogleTTS:

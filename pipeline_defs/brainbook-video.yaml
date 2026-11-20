@@ -1,0 +1,182 @@
+name: brainbook-video
+version: "2.0"
+description: >
+  BrainBook Video — branded, narrated, captioned lesson videos from a course
+  module. Authoring stages shape the module (slides, narration, assessment,
+  presenter and sound plan); the compose stage renders it through the bb_video
+  Remotion project, which owns TTS, word-level captions, avatar presenter,
+  music and b-roll. Produces lesson.mp4 plus the quiz data.
+category: custom
+stability: beta
+default_checkpoint_policy: guided
+
+metadata:
+  title: BrainBook Video
+  renderer: bb_video
+  external_repo: ../bb_video
+  module_schema: bb_video/src/data/bb_exam/m01.json
+
+extensions:
+  custom_scripts: true
+  custom_playbooks: true
+  custom_skills: true
+  custom_tools: false
+
+required_skills:
+  - pipelines/brainbook-video/idea-director
+  - pipelines/brainbook-video/script-director
+  - pipelines/brainbook-video/scene-director
+  - pipelines/brainbook-video/asset-director
+  - pipelines/brainbook-video/edit-director
+  - pipelines/brainbook-video/compose-director
+  - pipelines/brainbook-video/publish-director
+  - meta/reviewer
+  - meta/checkpoint-protocol
+
+orchestration:
+  mode: executive-producer
+  skill: pipelines/brainbook-video/idea-director
+  budget_default_usd: 1.00
+  max_revisions_per_stage: 3
+  max_send_backs: 3
+  max_wall_time_minutes: 40
+
+compatible_playbooks:
+  recommended:
+    - clean-professional
+    - flat-motion-graphics
+  also_works:
+    - premium-minimalist
+  custom_allowed: true
+
+stages:
+  - name: idea
+    skill: pipelines/brainbook-video/idea-director
+    produces:
+      - brief
+      - decision_log
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Audience, course context and module position are explicit
+      - Narration length fits the target runtime
+      - Voice, presenter and music choices are stated up front
+      - Missing capabilities (avatar, cloud voice) are surfaced, not assumed
+    success_criteria:
+      - Schema-valid brief artifact
+      - Brief records runtime target, voice/presenter plan and brand context
+
+  - name: script
+    skill: pipelines/brainbook-video/script-director
+    required_artifacts_in:
+      - brief
+    produces:
+      - script
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Narration is spoken copy, not an essay
+      - Slide count and pacing suit the module runtime
+      - The closing recap and assessment match the narrated content
+      - Lesson module JSON follows the bb_video schema
+    success_criteria:
+      - Schema-valid script artifact
+      - A bb_video module JSON (slides + narration + assessment) is written beside it
+
+  - name: scene_plan
+    skill: pipelines/brainbook-video/scene-director
+    required_artifacts_in:
+      - script
+    produces:
+      - scene_plan
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Every slide has a kind (title, objectives, content, recap)
+      - On-screen text stays short enough to read at a glance
+      - Slide order tells one continuous lesson
+    success_criteria:
+      - Schema-valid scene_plan artifact
+      - Slide timings and kinds align with the module JSON
+
+  - name: assets
+    skill: pipelines/brainbook-video/asset-director
+    required_artifacts_in:
+      - scene_plan
+    produces:
+      - asset_manifest
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Narration, captions, presenter and music providers are named explicitly
+      - Provider availability and cost profile are honest
+      - Portrait and b-roll references exist and are rights-safe
+    success_criteria:
+      - Schema-valid asset_manifest artifact
+      - Asset plan maps every requested asset to its provider and inputs
+
+  - name: edit
+    skill: pipelines/brainbook-video/edit-director
+    required_artifacts_in:
+      - asset_manifest
+      - scene_plan
+    produces:
+      - edit_decisions
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: false
+    review_focus:
+      - Presenter layout and caption style are consistent across slides
+      - Music level sits under narration, not over it
+      - Render settings follow the approved asset plan
+    success_criteria:
+      - Schema-valid edit_decisions artifact
+      - Edit decisions name the renderer, providers and layout
+
+  - name: compose
+    skill: pipelines/brainbook-video/compose-director
+    required_artifacts_in:
+      - edit_decisions
+      - asset_manifest
+    optional_artifacts_in:
+      - scene_plan
+      - script
+    produces:
+      - render_report
+    required_tools:
+      - bb_video_lesson
+    tools_available:
+      - bb_video_lesson
+    checkpoint_required: true
+    human_approval_default: false
+    review_focus:
+      - The rendered MP4 exists and probes cleanly
+      - Narration, captions and slides are in sync
+      - Provider fallbacks (placeholder avatar, no music) are recorded honestly
+    success_criteria:
+      - Schema-valid render_report artifact
+      - Output file exists and includes narration and captions
+
+  - name: publish
+    skill: pipelines/brainbook-video/publish-director
+    required_artifacts_in:
+      - render_report
+    optional_artifacts_in:
+      - brief
+      - script
+    produces:
+      - publish_log
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Export package and metadata are complete
+      - Quiz data and passing threshold travel with the lesson
+      - Delivery target and naming are explicit
+    success_criteria:
+      - Schema-valid publish_log artifact
+      - Deliverable paths and metadata recorded

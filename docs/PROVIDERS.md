@@ -1429,6 +1429,23 @@ runtime; stop the unused backend so selectors route to the running one.
 Setup, auth, and the either/or workflow are documented in
 [`UNSLOTH_STUDIO.md`](UNSLOTH_STUDIO.md).
 
+### BrainBook Video — Lesson Renderer
+
+**Tool:** `bb_video_lesson` · **Pipeline:** `brainbook-video`
+
+**Env var:** `BB_VIDEO_DIR` (default: sibling `../bb_video`)
+
+Wraps the external **bb_video** Remotion project. It takes a module JSON
+(slides + narration + assessment) and renders the finished lesson: TTS
+narration, word-level captions, avatar presenter, music, b-roll, then Remotion.
+
+The `brainbook-video` pipeline authors the module across `idea → script →
+scene_plan → assets → edit` and calls `bb_video_lesson` once at `compose`. A
+bb_video checkout with `node_modules` and its venvs is required; provider
+defaults are kokoro (local voice), `kenburns` presenter, captions `auto`, and no
+music or b-roll. Stage guidance lives in
+`skills/pipelines/brainbook-video/`.
+
 ---
 
 ### Local Video Generation (GPU Required)
