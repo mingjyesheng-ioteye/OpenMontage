@@ -1593,7 +1593,7 @@ These tools require only FFmpeg or Python packages — no GPU, no API key.
 | **Math Animate** | `pip install manim` | ManimCE mathematical animations |
 | **Subtitle Gen** | No install needed | SRT/VTT subtitle file generation |
 | **Video Understand** | `pip install transformers torch` | CLIP/BLIP-2 visual analysis |
-| **Talking Head** | Clone [SadTalker](https://github.com/OpenTalker/SadTalker) | Avatar animation from photo + audio |
+| **Talking Head** | Clone [SadTalker](https://github.com/OpenTalker/SadTalker), or run a talking-head service and set `TALKING_HEAD_SERVICE_URL` | Avatar animation from photo + audio |
 | **Lip Sync** | Clone [Wav2Lip](https://github.com/Rudrabha/Wav2Lip) | Audio-driven lip synchronization |
 
 ---

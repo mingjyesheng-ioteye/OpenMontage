@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -113,8 +114,26 @@ class PiperTTS(BaseTool):
     def _voice_data_dir() -> Path:
         return Path.home() / ".piper" / "models"
 
+    @staticmethod
+    def _piper_binary() -> str | None:
+        """Resolve ``piper`` even when the venv is not activated.
+
+        ``shutil.which`` only sees PATH, but a venv's console scripts live next
+        to ``sys.executable``. Running ``.venv/bin/python -m ...`` (or a service
+        that calls it by absolute path) leaves them off PATH, which used to
+        report TTS as unavailable on a machine where piper and a voice are
+        installed.
+        """
+        found = shutil.which("piper")
+        if found:
+            return found
+        candidate = Path(sys.executable).with_name("piper")
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+        return None
+
     def get_status(self) -> ToolStatus:
-        if shutil.which("piper"):
+        if self._piper_binary():
             return ToolStatus.AVAILABLE
         return ToolStatus.UNAVAILABLE
 
@@ -138,9 +157,15 @@ class PiperTTS(BaseTool):
         output_path = Path(inputs.get("output_path", "tts_output.wav"))
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        binary = self._piper_binary()
+        if not binary:
+            return ToolResult(
+                success=False, error="Piper TTS not available. " + self.install_instructions
+            )
+
         proc = subprocess.run(
             [
-                "piper",
+                binary,
                 "--model", inputs.get("model", "en_US-lessac-medium"),
                 "--data-dir", str(self._voice_data_dir()),
                 "--speaker", str(inputs.get("speaker_id", 0)),

@@ -6,12 +6,15 @@ Uses SadTalker or MuseTalk models for audio-driven face animation.
 
 from __future__ import annotations
 
+import base64
 import glob
 import os
 import shutil
 import time
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from tools.base_tool import (
     BaseTool,
@@ -28,7 +31,7 @@ from tools.base_tool import (
 
 class TalkingHead(BaseTool):
     name = "talking_head"
-    version = "0.1.0"
+    version = "0.2.0"
     tier = ToolTier.GENERATE
     capability = "avatar"
     provider = "sadtalker"
@@ -39,9 +42,11 @@ class TalkingHead(BaseTool):
 
     dependencies = []  # checked dynamically via get_status()
     install_instructions = (
-        "Clone https://github.com/OpenTalker/SadTalker and set SADTALKER_PATH env var\n"
-        "Requires: PyTorch with CUDA, ffmpeg\n"
-        "pip install sadtalker  # or clone the repo"
+        "Run a talking-head service and set TALKING_HEAD_SERVICE_URL "
+        "(e.g. http://localhost:8691), or run SadTalker locally:\n"
+        "  Clone https://github.com/OpenTalker/SadTalker and set SADTALKER_PATH\n"
+        "The service contract is POST /v1/avatar {portrait_b64, audio_b64} -> "
+        "job id, GET /v1/avatar/{id} -> status, GET /v1/avatar/{id}/content -> mp4."
     )
 
     agent_skills = ["ffmpeg"]
@@ -109,7 +114,19 @@ class TalkingHead(BaseTool):
     # ------------------------------------------------------------------
 
     def get_status(self) -> ToolStatus:
-        """Check for SadTalker availability via env var or Python import."""
+        """A running talking-head service wins, then a local SadTalker install."""
+        service_url = self._service_url()
+        if service_url:
+            try:
+                response = requests.get(f"{service_url}/health", timeout=2)
+                return (
+                    ToolStatus.AVAILABLE
+                    if response.status_code == 200
+                    else ToolStatus.UNAVAILABLE
+                )
+            except Exception:
+                return ToolStatus.UNAVAILABLE
+
         # 1. SADTALKER_PATH env var pointing to cloned repo
         sadtalker_path = os.environ.get("SADTALKER_PATH", "")
         if sadtalker_path and Path(sadtalker_path).is_dir():
@@ -123,6 +140,10 @@ class TalkingHead(BaseTool):
             pass
 
         return ToolStatus.UNAVAILABLE
+
+    @staticmethod
+    def _service_url() -> str:
+        return (os.environ.get("TALKING_HEAD_SERVICE_URL") or "").rstrip("/")
 
     # ------------------------------------------------------------------
     # Cost & runtime estimates
@@ -157,7 +178,9 @@ class TalkingHead(BaseTool):
         start = time.time()
 
         try:
-            if model == "sadtalker":
+            if self._service_url():
+                result = self._run_service(inputs, image_path, audio_path, output_path)
+            elif model == "sadtalker":
                 result = self._run_sadtalker(inputs, image_path, audio_path, output_path)
             elif model == "musetalk":
                 result = self._run_musetalk(inputs, image_path, audio_path, output_path)
@@ -171,6 +194,107 @@ class TalkingHead(BaseTool):
 
         result.duration_seconds = round(time.time() - start, 2)
         return result
+
+    def _run_service(
+        self,
+        inputs: dict[str, Any],
+        image_path: Path,
+        audio_path: Path,
+        output_path: Path,
+    ) -> ToolResult:
+        """Render through a talking-head HTTP service (Windows GPU, etc.).
+
+        Contract: POST /v1/avatar {portrait_b64, audio_b64} -> {id};
+        GET /v1/avatar/{id} -> status; GET /v1/avatar/{id}/content -> mp4.
+        The service may answer 429 while busy, so submissions are retried.
+        """
+        service = self._service_url()
+        try:
+            health = requests.get(f"{service}/health", timeout=5)
+            if health.status_code != 200:
+                return ToolResult(
+                    success=False,
+                    error=f"Talking-head service at {service} is unhealthy "
+                    f"(HTTP {health.status_code}).",
+                )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(
+                success=False,
+                error=f"Talking-head service not reachable at {service}: {exc}",
+            )
+
+        payload = {
+            "portrait_b64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
+            "audio_b64": base64.b64encode(audio_path.read_bytes()).decode("ascii"),
+        }
+
+        job_id = None
+        for _ in range(60):
+            response = requests.post(f"{service}/v1/avatar", json=payload, timeout=60)
+            if response.status_code == 429:
+                time.sleep(5)
+                continue
+            if response.status_code >= 400:
+                return ToolResult(
+                    success=False,
+                    error=f"Talking-head service rejected the job "
+                    f"({response.status_code}): {response.text[:300]}",
+                )
+            job_id = (response.json() or {}).get("id")
+            break
+        if not job_id:
+            return ToolResult(
+                success=False,
+                error="Talking-head service stayed busy for 5 minutes; try again later.",
+            )
+
+        deadline = time.time() + 1800
+        while time.time() < deadline:
+            status = requests.get(f"{service}/v1/avatar/{job_id}", timeout=30).json()
+            state = str(status.get("status", "")).lower()
+            if state == "done":
+                break
+            if state == "failed":
+                return ToolResult(
+                    success=False,
+                    error=f"Talking-head service failed: {status.get('error') or 'unknown error'}",
+                )
+            time.sleep(2)
+        else:
+            return ToolResult(
+                success=False,
+                error=f"Talking-head job {job_id} did not finish within 30 minutes.",
+            )
+
+        content = requests.get(f"{service}/v1/avatar/{job_id}/content", timeout=300)
+        if content.status_code >= 400 or not content.content:
+            return ToolResult(
+                success=False,
+                error=f"Could not download the talking-head result "
+                f"({content.status_code}).",
+            )
+        output_path.write_bytes(content.content)
+
+        try:  # a finished job is disposable
+            requests.delete(f"{service}/v1/avatar/{job_id}", timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+
+        return ToolResult(
+            success=True,
+            data={
+                "model": "talking-head-service",
+                "backend": "service",
+                "service_url": service,
+                "job_id": job_id,
+                "image": str(image_path),
+                "audio": str(audio_path),
+                "output": str(output_path),
+                "format": "mp4",
+            },
+            artifacts=[str(output_path)],
+            model="talking-head-service",
+        )
 
     def _run_sadtalker(
         self,
