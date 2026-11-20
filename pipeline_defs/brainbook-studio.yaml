@@ -1,0 +1,216 @@
+name: brainbook-studio
+version: "1.0"
+description: >
+  Shot-list pipeline for BrainBook Studio: turn a short creative brief into a
+  finished clip using local image and video generation, then assemble and render
+  it. No research phase — optimized for fast, controlled shots on local providers
+  (Unsloth Studio or ComfyUI) with reproducible provenance for every take.
+category: generated
+stability: beta
+default_checkpoint_policy: guided
+
+extensions:
+  custom_scripts: true
+  custom_playbooks: true
+  custom_skills: true
+  custom_tools: false
+
+required_skills:
+  - pipelines/brainbook-studio/idea-director
+  - pipelines/brainbook-studio/script-director
+  - pipelines/brainbook-studio/scene-director
+  - pipelines/brainbook-studio/asset-director
+  - pipelines/brainbook-studio/edit-director
+  - pipelines/brainbook-studio/compose-director
+  - pipelines/brainbook-studio/publish-director
+  - meta/reviewer
+  - meta/checkpoint-protocol
+
+compatible_playbooks:
+  recommended:
+    - flat-motion-graphics
+    - premium-minimalist
+  also_works:
+    - clean-professional
+    - minimalist-diagram
+  custom_allowed: true
+
+stages:
+  - name: idea
+    skill: pipelines/brainbook-studio/idea-director
+    produces:
+      - brief
+      - decision_log
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Hook, audience, aspect, and target duration are explicit
+      - Shot-count and runtime budget match the delivery promise
+      - Local provider plan (Unsloth Studio or ComfyUI) is named with its tradeoffs
+      - Both composition runtimes were presented and one is locked with a reason
+      - Music and narration decisions are recorded, not deferred
+    success_criteria:
+      - Schema-valid brief with target_platform, target_duration_seconds and hook
+      - brief.metadata records aspect_ratio, shot_count_hint and generation_provider
+      - decision_log records provider, model family, and render_runtime_selection
+
+  - name: script
+    skill: pipelines/brainbook-studio/script-director
+    required_artifacts_in:
+      - brief
+    produces:
+      - script
+    tools_available:
+      - tts_selector
+      - subtitle_gen
+    optional_tools:
+      - tts_selector
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Copy is written for the ear, not the page
+      - Sections map to shots and stay inside the approved duration
+      - One idea per section; no sentence carries two beats
+      - On-screen text is short enough to read at the target aspect
+    success_criteria:
+      - Schema-valid script whose total_duration_seconds matches the brief
+      - Every section has start/end times and a label a shot can reference
+      - Narration source (TTS or supplied) and voice are recorded
+
+  - name: scene_plan
+    skill: pipelines/brainbook-studio/scene-director
+    required_artifacts_in:
+      - brief
+      - script
+    produces:
+      - scene_plan
+    tools_available: []
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Every scene is a generateable shot, not an abstract idea
+      - Each shot names its generator, size, steps, frames, and reference frame
+      - Prompts describe subject, action, camera, light, and mood in that order
+      - Image-to-video shots describe motion only — identity comes from the frame
+      - Render budget is realistic for the chosen provider
+    success_criteria:
+      - Schema-valid scene_plan with ordered scenes and start/end times
+      - Every scene carries generation metadata (mode, provider, model, size, steps)
+      - Continuous timeline with no gaps or overlaps
+
+  - name: assets
+    skill: pipelines/brainbook-studio/asset-director
+    required_artifacts_in:
+      - scene_plan
+      - script
+    produces:
+      - asset_manifest
+    required_tools:
+      - video_selector
+    tools_available:
+      - video_selector
+      - image_selector
+      - unsloth_image
+      - unsloth_video
+      - comfyui_image
+      - comfyui_video
+      - tts_selector
+      - subtitle_gen
+      - music_library
+      - music_gen
+      - audio_enhance
+    optional_tools:
+      - image_selector
+      - tts_selector
+      - music_library
+      - subtitle_gen
+      - audio_enhance
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Every scene has a take that exists on disk and probes cleanly
+      - Model, quantization, seed, size, steps and frames are recorded per asset
+      - Failed or substituted shots are logged, not silently swapped
+      - Narration and music fit the approved script and duration
+    success_criteria:
+      - Schema-valid asset_manifest; every path exists under the project
+      - Each asset records source_tool, model, seed, resolution and scene_id
+      - total_cost_usd reflects local compute (0) or the agreed provider spend
+
+  - name: edit
+    skill: pipelines/brainbook-studio/edit-director
+    required_artifacts_in:
+      - scene_plan
+      - asset_manifest
+    optional_artifacts_in:
+      - script
+    produces:
+      - edit_decisions
+    tools_available:
+      - transcriber
+    optional_tools:
+      - transcriber
+    checkpoint_required: false
+    human_approval_default: false
+    review_focus:
+      - Cuts map one-to-one to the approved shot list
+      - render_runtime and composition_mode match the locked brief decision
+      - Transitions are motivated, not decorative
+      - Captions land on the spoken phrase, not a fixed offset
+    success_criteria:
+      - Schema-valid edit_decisions with render_runtime and ordered cuts
+      - Every cut references an existing asset or generated file
+      - Audio plan (narration bed, music, ducking) is explicit
+
+  - name: compose
+    skill: pipelines/brainbook-studio/compose-director
+    required_artifacts_in:
+      - edit_decisions
+      - asset_manifest
+    produces:
+      - render_report
+    required_tools:
+      - video_compose
+      - audio_mixer
+    tools_available:
+      - video_compose
+      - audio_mixer
+      - video_stitch
+    optional_tools:
+      - video_stitch
+    checkpoint_required: false
+    human_approval_default: false
+    review_focus:
+      - The render matches the locked runtime and edit decisions
+      - Output probes cleanly at the approved aspect, duration, and loudness
+      - No slideshow drift — generated motion is preserved, not replaced by pans
+      - Captions are burned per the edit decision
+    success_criteria:
+      - Schema-valid render_report with a final mp4 and verified duration
+      - ffprobe confirms resolution, frame rate, and an audio stream when expected
+      - Warnings list is empty or explained
+
+  - name: publish
+    skill: pipelines/brainbook-studio/publish-director
+    required_artifacts_in:
+      - render_report
+    optional_artifacts_in:
+      - brief
+      - script
+    produces:
+      - publish_log
+    required_tools:
+      - export_bundle
+    tools_available:
+      - export_bundle
+    checkpoint_required: true
+    human_approval_default: true
+    review_focus:
+      - Export package carries the master, captions, and metadata
+      - Filenames and thumbnails match the brief's audience and platform
+      - Local provider provenance travels with the deliverable
+    success_criteria:
+      - Schema-valid publish_log listing the exported files
+      - Master video, captions, and a poster frame are included
+      - Metadata records title, duration, aspect, and generation stack
