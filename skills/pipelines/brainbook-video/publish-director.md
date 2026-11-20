@@ -24,9 +24,11 @@ presenter without rewriting the content.
 
 - **Local package**: copy the video + module JSON into the agreed folder and
   record both absolute paths.
-- **BrainBook LMS**: the `bb_video` repo ships `scripts/deliver-to-bb-exam.mjs`
-  for pushing media into bb_exam. Only use it when the delivery target and
-  credentials are explicitly approved; never publish silently.
+- **bb_exam (when the project has a source)**: `artifacts/bb_exam_source.json`
+  names the course slug and module key. Deliver the lesson into that
+  course/module media with `bb_video/scripts/deliver-to-bb-exam.mjs`
+  (`--file`, `--slug`, `--module`; credentials from `BB_EXAM_TOKEN` or
+  `BB_EXAM_EMAIL`/`BB_EXAM_PASSWORD`). Only do this with explicit approval.
 - **Library**: add the finished video to the project's `renders/` if the user
   asked for a board-visible deliverable.
 

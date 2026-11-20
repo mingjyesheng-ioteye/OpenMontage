@@ -11,6 +11,24 @@ The module JSON is the contract with `bb_video`; if it is wrong, the render
 fails or the narration drifts off the slides. Copy the shape from
 `bb_video/src/data/bb_exam/m01.json`.
 
+## Converting a bb_exam module
+
+When `artifacts/bb_exam_source.json` has `kind: "bb_exam"`, the module content is
+already authored (title, summary, objectives, blocks, conversation, quiz). Map
+it — do not re-research:
+
+| bb_exam field | bb_video output |
+|---|---|
+| course/module title | `title` slide (`heading`, `sub` = course · module) |
+| `objectives[]` | `objectives` slide; narration reads them as outcomes |
+| each `blocks[]` | one `content` slide: `heading` = block title, narration = block body, tightened to 25–60 spoken words |
+| `conversation[]` | examples/phrasing for narration; instructor turns can become the opening or recap voice |
+| `quiz[]` | carry prompts/options only if `answer` indexes are known; otherwise omit `assessment` (the LMS quiz remains authoritative) |
+| `summary` | recap narration |
+
+Keep the LMS module title and section order. Do not invent new sections the
+source does not support.
+
 ## Module Schema
 
 ```json

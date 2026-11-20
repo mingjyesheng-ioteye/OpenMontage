@@ -24,6 +24,25 @@ composition. Per AGENT_GUIDE.md, say so explicitly and record a
 - `bb_video/README.md` and `scripts/build-lesson.sh` — renderer contract and env knobs
 - `skills/creative/storytelling.md`
 
+## Lesson Source (check before anything else)
+
+If `artifacts/bb_exam_source.json` exists, the lesson is **not** starting from a
+blank page:
+
+- `kind: "bb_video_module"` — `artifacts/lesson_module.json` is already written
+  from an existing bb_video lesson. Confirm with the user whether this is a
+  **remaster** (same slides/narration, new voice/presenter/music) or a revision
+  (edit narration/slides before rendering). Do not rewrite it from scratch
+  without approval.
+- `kind: "bb_exam"` — the source is a published bb_exam module (title, summary,
+  objectives, blocks, conversation, quiz). Treat those as the approved content:
+  convert them to slides and narration in the script stage (see the script
+  director), do not research the topic again. The public payload omits quiz
+  answer keys; keep the LMS quiz authoritative and omit the module `assessment`
+  unless the answers are supplied.
+
+Record the source in the brief (`source_kind`, `source_course`, `source_module`).
+
 ## Process
 
 ### 1. Establish the course context

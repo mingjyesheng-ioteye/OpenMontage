@@ -18,7 +18,7 @@ available runtimes before locking one, per AGENT_GUIDE.md. For this pipeline:
 
 - **Remotion** — best when the piece is mostly stills with spring motion,
   captions, stat cards, and reliable audio mixing.
-- **HyperFrames** — best when the piece is type-led, kinetic, or needs HTML/CSS
+- **HyperFrames** (`hyperframes`) — best when the piece is type-led, kinetic, or needs HTML/CSS
   motion (title sequences, overlays, web-native looks).
 - **FFmpeg** — only for straight cut/concat with no authored motion.
 
