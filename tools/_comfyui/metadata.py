@@ -30,6 +30,112 @@ COMFYUI_SETUP_OFFER: dict[str, Any] = {
 
 
 BUNDLED_MODEL_STACKS: dict[str, list[dict[str, Any]]] = {
+    # AI models are hard linked into the ComfyUI model tree, so the same download
+    # used by Unsloth Studio can be reused without a 40 GB copy. The text encoder is
+    # the ComfyUI-format safetensors: ComfyUI-GGUF's CLIPLoaderGGUF is
+    # llama.cpp-based and cannot load MiniMax H3 / Qwen Image Qwen3-VL GGUF text
+    # encoders ("incompatible with llama.cpp"), only the denoiser is GGUF here.
+    "qwen-image-2.1-turbo-gguf": [
+        {
+            "role": "diffusion_model",
+            "name": "qwen-image-2.1-turbo-Q8_0.gguf",
+            "quantization": "Q8_0 GGUF (unsloth)",
+            "loader_node": "UnetLoaderGGUF (ComfyUI-GGUF)",
+            "destination_hint": "ComfyUI/models/diffusion_models/",
+            "download_url": (
+                "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF"
+            ),
+        },
+        {
+            "role": "text_encoder",
+            "name": "qwen3vl_8b_int8_convrot.safetensors",
+            "quantization": "INT8 ConvRot",
+            "destination_hint": "ComfyUI/models/text_encoders/",
+            "download_url": (
+                "https://huggingface.co/unsloth/Qwen-Image-2.1-FP8 "
+                "(Qwen-Image-2.1-text_encoder-INT8-ConvRot.safetensors) or "
+                "https://huggingface.co/Comfy-Org/Qwen-Image-2.1"
+            ),
+        },
+        {
+            "role": "vae",
+            "name": "qwen_image_2.1_vae_bf16.safetensors",
+            "destination_hint": "ComfyUI/models/vae/",
+            "download_url": (
+                "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/tree/main/vae"
+            ),
+        },
+    ],
+    "minimax-h3-fl2va-gguf": [
+        {
+            "role": "diffusion_model",
+            "name": "minimax_h3_fl2va_pruned-Q8_0.gguf",
+            "quantization": "Q8_0 GGUF (unsloth)",
+            "loader_node": "UnetLoaderGGUF (ComfyUI-GGUF)",
+            "destination_hint": "ComfyUI/models/diffusion_models/",
+            "download_url": (
+                "https://huggingface.co/unsloth/MiniMax-H3-GGUF"
+            ),
+        },
+        {
+            "role": "text_encoder",
+            "name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+            "quantization": "INT8 ConvRot",
+            "destination_hint": "ComfyUI/models/text_encoders/",
+            "download_url": "https://huggingface.co/Comfy-Org/MiniMax-H3",
+        },
+        {
+            "role": "video_vae",
+            "name": "minimax_h3_video_vae_fp16.safetensors",
+            "destination_hint": "ComfyUI/models/vae/",
+            "download_url": (
+                "https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae"
+            ),
+        },
+        {
+            "role": "audio_vae",
+            "name": "minimax_h3_audio_vae_fp32.safetensors",
+            "destination_hint": "ComfyUI/models/vae/",
+            "download_url": (
+                "https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae"
+            ),
+        },
+    ],
+    "minimax-h3-ref2va-gguf": [
+        {
+            "role": "diffusion_model",
+            "name": "minimax_h3_ref2va_pruned-Q8_0.gguf",
+            "quantization": "Q8_0 GGUF (unsloth)",
+            "loader_node": "UnetLoaderGGUF (ComfyUI-GGUF)",
+            "destination_hint": "ComfyUI/models/diffusion_models/",
+            "download_url": (
+                "https://huggingface.co/unsloth/MiniMax-H3-GGUF"
+            ),
+        },
+        {
+            "role": "text_encoder",
+            "name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+            "quantization": "INT8 ConvRot",
+            "destination_hint": "ComfyUI/models/text_encoders/",
+            "download_url": "https://huggingface.co/Comfy-Org/MiniMax-H3",
+        },
+        {
+            "role": "video_vae",
+            "name": "minimax_h3_video_vae_fp16.safetensors",
+            "destination_hint": "ComfyUI/models/vae/",
+            "download_url": (
+                "https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae"
+            ),
+        },
+        {
+            "role": "audio_vae",
+            "name": "minimax_h3_audio_vae_fp32.safetensors",
+            "destination_hint": "ComfyUI/models/vae/",
+            "download_url": (
+                "https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae"
+            ),
+        },
+    ],
     "minimax-h3-local": [
         {
             "role": "diffusion_model",

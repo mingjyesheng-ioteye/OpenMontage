@@ -59,6 +59,26 @@ Use this skill before calling `comfyui_image`, `comfyui_video`, or `comfyui_musi
 - For LoRA stacks, use `LoraLoader` or `LoraLoaderModelOnly` chains in the workflow. Record each LoRA name plus `strength_model` and `strength_clip` when applicable.
 - The current ComfyUI tools do not inject LoRAs into arbitrary graphs. To use LoRAs, provide a workflow that already contains the LoRA loader chain and pass model-stack provenance.
 
+## GGUF Checkpoints
+
+- GGUF diffusion models need the [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) custom node (`UnetLoaderGGUF`). Install the `gguf` package into the ComfyUI venv and restart the server; without the node the files never appear in the loader menu.
+- A GGUF is only the denoiser. Pair it with a full-precision text encoder and VAE from the same model family.
+- `CLIPLoaderGGUF` is llama.cpp-based and rejects MiniMax H3 / Qwen-Image Qwen3-VL **text encoders** ("This gguf file is incompatible with llama.cpp!"). Load those from the ComfyUI-format `.safetensors` files instead.
+- GGUF files with no `general.architecture` key fail with "Unknown model architecture!". Newer image models (MiniMax H3) need the generic-loader fallback patch documented in `docs/AMD_WINDOWS_COMFYUI.md`.
+- VAE files must be the ComfyUI single-file builds. A diffusers `vae/diffusion_pytorch_model.safetensors` fails with `size mismatch for encoder.conv_in.weight`.
+
+### Bundled GGUF families
+
+| Tool | `model_family` | Workflow | Notes |
+|---|---|---|---|
+| `comfyui_image` | `qwen_image_2_1_turbo_gguf` | `qwen-image-2.1-turbo-gguf-t2i.json` | unsloth Qwen-Image-2.1-Turbo Q8_0, fixed 8-step sigma schedule, CFG 1, `euler`/`simple` |
+| `comfyui_image` | `flux2` (default) | `flux2-txt2img.json` | original FLUX.2 NVFP4 stack |
+| `comfyui_video` | `minimax_h3_local_gguf` | `minimax-h3-fl2va-gguf-t2v.json` | unsloth MiniMax H3 fl2va Q8_0, 24 fps, native stereo audio, `17k+5` frame grid |
+| `comfyui_video` | `minimax_h3_ref2va_gguf` | `minimax-h3-ref2va-gguf-i2v.json` | unsloth MiniMax H3 ref2va Q8_0, reference-conditioned identity, requires a reference image |
+
+- `minimax_h3_local` (custom workflow required) and `minimax_h3_local_gguf` (bundled workflow) are different paths. Do not hand-write a MiniMax H3 graph before checking whether the bundled GGUF one already fits.
+- H3 frame counts snap to `17k + 5` (39 ≈ 1.6 s, 124 ≈ 5.2 s). `duration` seconds are converted at 24 fps; step counts of 20 are the non-distilled quality setting, 4-8 with the turbo LoRA.
+
 ## Provenance
 
 - For custom workflows, provide `workflow_name` and `workflow_model` when known.

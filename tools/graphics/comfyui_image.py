@@ -41,6 +41,37 @@ _REQUIRED_MODELS = [
     "flux2-vae.safetensors",
 ]
 
+# Bundled model families. ``flux2`` keeps the original NVFP4 stack; the Qwen
+# family is the unsloth GGUF Qwen-Image-2.1-Turbo denoiser (8-step distilled).
+_MODEL_FAMILIES: dict[str, dict[str, Any]] = {
+    "flux2": {
+        "workflow": "flux2-txt2img.json",
+        "workflow_key": "flux2-txt2img",
+        "output_node": "13",
+        "required_models": _REQUIRED_MODELS,
+        "model_name": "flux2-dev-nvfp4",
+        "steps": 20,
+    },
+    "qwen_image_2_1_turbo_gguf": {
+        "workflow": "qwen-image-2.1-turbo-gguf-t2i.json",
+        "workflow_key": "qwen-image-2.1-turbo-gguf",
+        "output_node": "13",
+        "required_models": [
+            "qwen-image-2.1-turbo-Q8_0.gguf",
+            "qwen3vl_8b_int8_convrot.safetensors",
+            "qwen_image_2.1_vae_bf16.safetensors",
+        ],
+        "model_name": "qwen-image-2.1-turbo-q8_0-gguf",
+        "steps": 8,
+    },
+}
+
+
+def _snap32(value: int) -> int:
+    """Round *value* down to a multiple of 32 (Qwen/H3 latent grid)."""
+    value = max(32, int(value))
+    return max(32, (value // 32) * 32)
+
 
 class ComfyUIImage(BaseTool):
     name = "comfyui_image"
@@ -59,6 +90,8 @@ class ComfyUIImage(BaseTool):
         "Start a ComfyUI server and set COMFYUI_SERVER_URL "
         "(default http://localhost:8188).\n"
         "See https://github.com/comfyanonymous/ComfyUI for setup.\n"
+        "GGUF families (qwen_image_2_1_turbo_gguf) also need the ComfyUI-GGUF "
+        "custom node; see docs/AMD_WINDOWS_COMFYUI.md.\n"
         "Running a separate ComfyUI instance for images? Set COMFYUI_IMAGE_SERVER_URL "
         "instead -- it takes priority over COMFYUI_SERVER_URL for this tool only."
     )
@@ -76,6 +109,7 @@ class ComfyUIImage(BaseTool):
         "local GPU generation without API costs",
         "Blackwell / DGX Spark hardware where diffusers is unsupported",
         "full control over sampling via custom ComfyUI workflows",
+        "Qwen-Image-2.1-Turbo GGUF (model_family: qwen_image_2_1_turbo_gguf) for 8-step local text-to-image",
     ]
     not_good_for = [
         "setups without a running ComfyUI server",
@@ -89,6 +123,16 @@ class ComfyUIImage(BaseTool):
         "required": ["prompt"],
         "properties": {
             "prompt": {"type": "string", "description": "Text prompt for image generation"},
+            "model_family": {
+                "type": "string",
+                "enum": ["flux2", "qwen_image_2_1_turbo_gguf"],
+                "default": "flux2",
+                "description": (
+                    "Bundled local model family. flux2 = FLUX.2 dev NVFP4; "
+                    "qwen_image_2_1_turbo_gguf = unsloth Qwen-Image-2.1-Turbo Q8_0 GGUF "
+                    "(8-step distilled, needs ComfyUI-GGUF)."
+                ),
+            },
             "width": {"type": "integer", "default": 1024},
             "height": {"type": "integer", "default": 1024},
             "steps": {"type": "integer", "default": 20},
@@ -140,21 +184,30 @@ class ComfyUIImage(BaseTool):
     def get_status(self) -> ToolStatus:
         if not self._client.is_available():
             return ToolStatus.UNAVAILABLE
-        _, missing = self._client.check_models(_REQUIRED_MODELS)
-        if missing:
-            return ToolStatus.DEGRADED
-        return ToolStatus.AVAILABLE
+        for spec in _MODEL_FAMILIES.values():
+            _, missing = self._client.check_models(spec["required_models"])
+            if not missing:
+                return ToolStatus.AVAILABLE
+        return ToolStatus.DEGRADED
 
     def estimate_cost(self, inputs: dict[str, Any]) -> float:
         return 0.0
 
     def estimate_runtime(self, inputs: dict[str, Any]) -> float:
-        return float(inputs.get("steps", 20)) * 1.5
+        family = str(inputs.get("model_family", "flux2"))
+        steps = _MODEL_FAMILIES.get(family, _MODEL_FAMILIES["flux2"])["steps"]
+        return float(steps) * 1.5
 
     def get_info(self) -> dict[str, Any]:
         info = super().get_info()
         info["setup_offer"] = self.setup_offer
         info["bundled_model_stack"] = BUNDLED_MODEL_STACKS["flux2-txt2img"]
+        info["bundled_model_stacks"] = {
+            "flux2": BUNDLED_MODEL_STACKS["flux2-txt2img"],
+            "qwen_image_2_1_turbo_gguf": BUNDLED_MODEL_STACKS[
+                "qwen-image-2.1-turbo-gguf"
+            ],
+        }
         return info
 
     def execute(self, inputs: dict[str, Any]) -> ToolResult:
@@ -168,6 +221,17 @@ class ComfyUIImage(BaseTool):
                 ),
             )
 
+        family = str(inputs.get("model_family", "flux2"))
+        spec = _MODEL_FAMILIES.get(family)
+        if spec is None and not custom_workflow:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"Unknown ComfyUI image model_family {family!r}. "
+                    f"Choose one of {sorted(_MODEL_FAMILIES)} or supply a custom workflow."
+                ),
+            )
+
         if not self._client.is_available():
             return ToolResult(
                 success=False,
@@ -175,18 +239,29 @@ class ComfyUIImage(BaseTool):
             )
 
         if not custom_workflow:
-            _, missing = self._client.check_models(_REQUIRED_MODELS)
+            _, missing = self._client.check_models(spec["required_models"])
             if missing:
+                installed = [
+                    name
+                    for name, candidate in _MODEL_FAMILIES.items()
+                    if not self._client.check_models(candidate["required_models"])[1]
+                ]
+                hint = (
+                    f" Families fully installed on this server: {installed}. "
+                    f"Pass model_family=<name> to use one."
+                    if installed
+                    else ""
+                )
                 return ToolResult(
                     success=False,
                     data=missing_models_payload(
                         missing,
-                        workflow_key="flux2-txt2img",
-                        workflow_name="flux2-txt2img.json",
+                        workflow_key=spec["workflow_key"],
+                        workflow_name=spec["workflow"],
                     ),
                     error=(
-                        f"ComfyUI server is running but missing required models: "
-                        f"{', '.join(missing)}.\n"
+                        f"ComfyUI server is running but missing required models for "
+                        f"{family}: {', '.join(missing)}.{hint}\n"
                         f"See data.missing_models for destination hints and download URLs."
                     ),
                 )
@@ -195,16 +270,39 @@ class ComfyUIImage(BaseTool):
         seed = inputs.get("seed") or ComfyUIClient.random_seed()
         width = inputs.get("width", 1024)
         height = inputs.get("height", 1024)
-        steps = inputs.get("steps", 20)
-        guidance = inputs.get("guidance", 3.5)
+        steps = int(inputs.get("steps", spec["steps"] if spec else 20))
+        guidance = float(inputs.get("guidance", 1.0 if family == "qwen_image_2_1_turbo_gguf" else 3.5))
         output_path = Path(inputs.get("output_path", f"comfyui_image_{seed}.png"))
 
         try:
             if custom_workflow:
                 workflow = self._load_custom_workflow(inputs)
                 output_node = str(inputs["output_node"])
+            elif family == "qwen_image_2_1_turbo_gguf":
+                # Qwen-Image-2.1 latents sit on a 32 px grid.
+                width = _snap32(width)
+                height = _snap32(height)
+                workflow = ComfyUIClient.load_workflow(_WORKFLOWS / spec["workflow"])
+                workflow = ComfyUIClient.patch_workflow(workflow, {
+                    "4": {
+                        "prompt": inputs["prompt"],
+                        "resolution": _snap32(min(width, height)),
+                    },
+                    "5": {"width": width, "height": height, "batch_size": 1},
+                    "7": {"cfg": guidance},
+                    "10": {"noise_seed": seed},
+                    "13": {"filename_prefix": output_path.stem},
+                })
+                # Qwen-Image-2.1-Turbo ships a fixed 8-step sigma schedule
+                # (ManualSigmas). `steps` is reported from the schedule, not
+                # patched, because overriding it would desynchronise the
+                # distilled sampler.
+                steps = len(
+                    workflow["9"]["inputs"]["sigmas"].rstrip(", ").split(",")
+                ) - 1
+                output_node = spec["output_node"]
             else:
-                workflow = ComfyUIClient.load_workflow(_WORKFLOWS / "flux2-txt2img.json")
+                workflow = ComfyUIClient.load_workflow(_WORKFLOWS / spec["workflow"])
                 workflow = ComfyUIClient.patch_workflow(workflow, {
                     "4": {"text": inputs["prompt"]},
                     "5": {"guidance": guidance},
@@ -213,7 +311,7 @@ class ComfyUIImage(BaseTool):
                     "10": {"steps": steps, "width": width, "height": height},
                     "13": {"filename_prefix": output_path.stem},
                 })
-                output_node = "13"
+                output_node = spec["output_node"]
 
             provenance = self._workflow_provenance(
                 inputs, custom_workflow, output_node, workflow
@@ -258,7 +356,8 @@ class ComfyUIImage(BaseTool):
     @staticmethod
     def _model_name(inputs: dict[str, Any], custom_workflow: bool) -> str:
         if not custom_workflow:
-            return "flux2-dev-nvfp4"
+            family = str(inputs.get("model_family", "flux2"))
+            return _MODEL_FAMILIES.get(family, _MODEL_FAMILIES["flux2"])["model_name"]
         return (
             inputs.get("workflow_model")
             or inputs.get("model")
@@ -274,11 +373,14 @@ class ComfyUIImage(BaseTool):
         workflow: dict[str, Any],
     ) -> dict[str, Any]:
         if not custom_workflow:
+            family = str(inputs.get("model_family", "flux2"))
+            spec = _MODEL_FAMILIES.get(family, _MODEL_FAMILIES["flux2"])
             return {
                 "source": "bundled",
-                "workflow": "flux2-txt2img.json",
+                "workflow": spec["workflow"],
+                "model_family": family,
                 "workflow_hash_sha256": workflow_hash(workflow),
-                "model_stack": model_stack("flux2-txt2img", inputs),
+                "model_stack": model_stack(spec["workflow_key"], inputs),
                 "output_node": output_node,
             }
         return {

@@ -1375,6 +1375,21 @@ The same tool also supports these ComfyUI Partner Nodes:
 | `seedance_2.5` | `ByteDance2TextToVideoNode` | Hosted Partner Node | ~$0.148/sec 480p; ~$0.333/sec 720p |
 | `minimax_h3_api` | `MinimaxHailuo03TextToVideoNode` | Hosted Partner Node | ~$0.129/sec 768P; ~$0.186/sec 2K |
 | `minimax_h3_local` | official MiniMax H3 graph | Local GPU | No API charge |
+| `minimax_h3_local_gguf` | bundled fl2va GGUF graph | Local GPU (ComfyUI-GGUF) | No API charge |
+| `minimax_h3_ref2va_gguf` | bundled ref2va GGUF graph | Local GPU (ComfyUI-GGUF) | No API charge |
+
+### Local GGUF families (Qwen-Image-2.1-Turbo, MiniMax H3)
+
+`comfyui_image` also ships a bundled `qwen_image_2_1_turbo_gguf` family
+(unsloth `qwen-image-2.1-turbo-Q8_0.gguf`, 8-step distilled schedule), and
+`comfyui_video` ships `minimax_h3_local_gguf` (unsloth
+`minimax_h3_fl2va_pruned-Q8_0.gguf`, 24 fps, native stereo audio). Both need the
+ComfyUI-GGUF custom node and a ComfyUI-format `safetensors` text encoder; the
+GGUF text encoders from the unsloth repos do not load in ComfyUI.
+
+Setup, model placement, hard-linking against an existing Unsloth Studio
+download cache, and the known ComfyUI-GGUF limitations are documented in
+[`AMD_WINDOWS_COMFYUI.md`](AMD_WINDOWS_COMFYUI.md).
 
 Partner Nodes are not offline: they require current ComfyUI, network access, a
 logged-in Comfy account, and prepaid credits. Prices are estimates converted
@@ -1383,6 +1398,36 @@ from Comfy credits (211 credits = $1); actual metered usage is authoritative.
 Official references: [Partner Node overview](https://docs.comfy.org/tutorials/partner-nodes/overview),
 [pricing](https://docs.comfy.org/tutorials/partner-nodes/pricing), and
 [MiniMax H3 local tutorial](https://docs.comfy.org/tutorials/video/minimax/minimax-h3).
+
+---
+
+### Unsloth Studio — Local Image and Video
+
+**Tools:** `unsloth_image` (image generation), `unsloth_video` (text-to-video,
+image-to-video)
+
+**Env vars:** `UNSLOTH_SERVER_URL` (default `http://127.0.0.1:8888`),
+`UNSLOTH_API_KEY` or `UNSLOTH_USERNAME` / `UNSLOTH_PASSWORD` (required), plus
+`UNSLOTH_IMAGE_SERVER_URL` / `UNSLOTH_VIDEO_SERVER_URL` overrides.
+
+Unsloth Studio owns model loading, quantization, and the diffusion engine; the
+adapters only submit HTTP requests and download artifacts. Studio blocks API
+calls until its seeded bootstrap password is changed once, so the tools report
+`degraded` with that exact instruction instead of a bare 403.
+
+| Tool | Endpoint | Notes |
+|---|---|---|
+| `unsloth_image` | `POST /v1/images/generations` | OpenAI-shaped; b64 output; width/height/steps/guidance/seed optional |
+| `unsloth_video` | `POST /api/inference/video/generate` | async job + progress polling; first frame and reference images via data URLs; native audio on families that render it |
+
+Both tools snap requests to the loaded family's lattice/resolution (MiniMax H3:
+`17k+5` frames, 32 px multiple) and measure the finished artifact with
+`ffprobe`. Studio runs one video slot at a time — do not issue concurrent video
+jobs. Use this provider **instead of** ComfyUI when you want the Studio-managed
+runtime; stop the unused backend so selectors route to the running one.
+
+Setup, auth, and the either/or workflow are documented in
+[`UNSLOTH_STUDIO.md`](UNSLOTH_STUDIO.md).
 
 ---
 

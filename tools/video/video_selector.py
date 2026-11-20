@@ -240,6 +240,13 @@ class VideoSelector(BaseTool):
                 "type": "string",
                 "description": "Provider-specific model name passed through when supported.",
             },
+            "model_family": {
+                "type": "string",
+                "description": (
+                    "Local/runtime model family passed through when supported, e.g. "
+                    "comfyui_video's wan2.2 or minimax_h3_local_gguf."
+                ),
+            },
             "model": {
                 "type": "string",
                 "description": "Exact provider model id, e.g. an Atlas Cloud live model route.",

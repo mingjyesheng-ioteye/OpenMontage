@@ -17,6 +17,12 @@ from typing import Any, Callable
 
 import requests
 
+# Availability is probed by the registry, selectors, the Studio UI, and every
+# tool status check. A stopped server otherwise costs a full request timeout on
+# each probe (and each model-list node), so cache the answer briefly per URL.
+_AVAILABILITY: dict[str, tuple[float, bool]] = {}
+_AVAILABILITY_TTL = 10.0
+
 
 class ComfyUIError(Exception):
     """Raised when ComfyUI returns an error or times out.
@@ -167,12 +173,23 @@ class ComfyUIClient:
         )
 
     def is_available(self) -> bool:
-        """Return True if the ComfyUI server is reachable."""
+        """Return True if the ComfyUI server is reachable (failures cached ~10s)."""
+        now = time.monotonic()
+        cached = _AVAILABILITY.get(self.server_url)
+        if cached and now - cached[0] < _AVAILABILITY_TTL:
+            return cached[1]
         try:
-            resp = requests.get(f"{self.server_url}/system_stats", timeout=5)
-            return resp.status_code == 200
+            resp = requests.get(f"{self.server_url}/system_stats", timeout=2)
+            available = resp.status_code == 200
         except Exception:
-            return False
+            available = False
+        # Cache only failures: a reachable server answers in milliseconds, and
+        # a stale "available" would hide a backend that was just stopped.
+        if available:
+            _AVAILABILITY.pop(self.server_url, None)
+        else:
+            _AVAILABILITY[self.server_url] = (now, False)
+        return available
 
     # ------------------------------------------------------------------
     # Model discovery
@@ -194,8 +211,12 @@ class ComfyUIClient:
         node_to_key = {
             "CheckpointLoaderSimple": ("ckpt_name", "checkpoints"),
             "UNETLoader": ("unet_name", "diffusion_models"),
+            # ComfyUI-GGUF exposes its own loaders; GGUF files are not listed by
+            # the core UNETLoader, so include them when the node is installed.
+            "UnetLoaderGGUF": ("unet_name", "diffusion_models"),
             "VAELoader": ("vae_name", "vae"),
             "CLIPLoader": ("clip_name", "clip"),
+            "CLIPLoaderGGUF": ("clip_name", "clip"),
             "LoraLoaderModelOnly": ("lora_name", "loras"),
         }
         result: dict[str, list[str]] = {}
@@ -213,16 +234,25 @@ class ComfyUIClient:
                     .get(field, [[]])[0]
                 )
                 if isinstance(options, list):
-                    result[group] = options
+                    bucket = result.setdefault(group, [])
+                    for option in options:
+                        if option not in bucket:
+                            bucket.append(option)
+                else:
+                    result.setdefault(group, [])
             except Exception:
-                result[group] = []
+                result.setdefault(group, [])
         return result
 
     def check_models(self, required: list[str]) -> tuple[list[str], list[str]]:
         """Check which of *required* model filenames are available.
 
-        Returns ``(found, missing)`` — two lists of filenames.
+        Returns ``(found, missing)`` — two lists of filenames. A stopped server
+        reports every file as missing instead of paying a request timeout per
+        loader node (the Studio and registry probe status often).
         """
+        if not self.is_available():
+            return [], list(required)
         all_models: set[str] = set()
         for names in self.list_models().values():
             all_models.update(names)

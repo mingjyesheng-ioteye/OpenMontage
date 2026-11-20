@@ -63,6 +63,67 @@ _REQUIRED_MODELS_T2V = [
     "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
 ]
 
+# Bundled MiniMax H3 open-weight stacks (GGUF denoisers + native audio).
+# ComfyUI-GGUF loads the denoiser; the Qwen3-VL text encoder must be the
+# ComfyUI-format safetensors because CLIPLoaderGGUF is llama.cpp-based and
+# rejects MiniMax H3 / Qwen3-VL GGUF text encoders.
+#
+# fl2va = text plus zero/one/two anchor frames (bundled text-to-video path).
+# ref2va = reference-image conditioned (identity/style carried through sampling).
+_H3_FAMILIES: dict[str, dict[str, Any]] = {
+    "minimax_h3_local_gguf": {
+        "workflow": "minimax-h3-fl2va-gguf-t2v.json",
+        "workflow_key": "minimax-h3-fl2va-gguf",
+        "output_node": "14",
+        "denoiser": "minimax_h3_fl2va_pruned-Q8_0.gguf",
+        "model_name": "minimax-h3-fl2va-pruned-q8_0-gguf",
+        "requires_reference": False,
+    },
+    "minimax_h3_ref2va_gguf": {
+        "workflow": "minimax-h3-ref2va-gguf-i2v.json",
+        "workflow_key": "minimax-h3-ref2va-gguf",
+        "output_node": "14",
+        "denoiser": "minimax_h3_ref2va_pruned-Q8_0.gguf",
+        "model_name": "minimax-h3-ref2va-pruned-q8_0-gguf",
+        "requires_reference": True,
+    },
+}
+
+_H3_SHARED_MODELS = [
+    "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+    "minimax_h3_video_vae_fp16.safetensors",
+    "minimax_h3_audio_vae_fp32.safetensors",
+]
+
+for _h3_spec in _H3_FAMILIES.values():
+    _h3_spec["required_models"] = [_h3_spec["denoiser"], *_H3_SHARED_MODELS]
+
+# MiniMax H3 renders 24 fps and snaps frame counts up to its 17k+5 grid.
+_H3_FPS = 24
+
+
+def _snap32(value: Any) -> int:
+    """Round *value* down to a multiple of 32 (H3/Qwen latent grid)."""
+    value = max(32, int(value))
+    return max(32, (value // 32) * 32)
+
+
+def _h3_length(inputs: dict[str, Any]) -> int:
+    """Frame count on MiniMax H3's 17k+5 grid (124 = ~5.17 s at 24 fps).
+
+    Prefers an explicit ``num_frames``; otherwise derives the count from
+    ``duration`` seconds at H3's native 24 fps.
+    """
+    if inputs.get("num_frames"):
+        target = int(inputs["num_frames"])
+    else:
+        target = round(float(inputs.get("duration", 5)) * _H3_FPS)
+    target = max(5, target)
+    if (target - 5) % 17 == 0:
+        return target
+    return 5 + ((target - 5 + 16) // 17) * 17
+
+
 _RESOURCE_PROFILES = {
     "provider_floor": {
         "vram_mb": 8000,
@@ -109,7 +170,9 @@ class ComfyUIVideo(BaseTool):
         "Start a ComfyUI server and set COMFYUI_SERVER_URL "
         "(default http://localhost:8188).\n"
         "Bundled local WAN requires WAN 2.2 models and LightX2V LoRAs. Local "
-        "MiniMax H3 requires its official model stack and exported API workflow.\n"
+        "MiniMax H3 requires its official model stack and exported API workflow; "
+        "model_family=minimax_h3_local_gguf ships a bundled GGUF fl2va workflow "
+        "(ComfyUI-GGUF, 24 fps, native stereo audio).\n"
         "Gemini Omni, Seedance 2.5, and MiniMax H3 Partner Nodes require a "
         "logged-in Comfy account, credits, and network access.\n"
         "Running a separate ComfyUI instance for video? Set COMFYUI_VIDEO_SERVER_URL "
@@ -135,6 +198,7 @@ class ComfyUIVideo(BaseTool):
         "seedance_2_5_partner_node": True,
         "minimax_h3_partner_node": True,
         "minimax_h3_local_weights": True,
+        "minimax_h3_local_gguf_bundled": True,
     }
     best_for = [
         "local GPU video generation without API costs",
@@ -174,13 +238,19 @@ class ComfyUIVideo(BaseTool):
                     "seedance_2.5",
                     "minimax_h3_api",
                     "minimax_h3_local",
+                    "minimax_h3_local_gguf",
+                    "minimax_h3_ref2va_gguf",
                     "ltx_2.5_local",
                 ],
                 "default": "wan2.2",
                 "description": (
                     "Built-in execution family. The three *_api/hosted families use "
                     "ComfyUI Partner Nodes and credits; minimax_h3_local uses open weights "
-                    "through a caller-supplied official/custom workflow."
+                    "through a caller-supplied official/custom workflow; "
+                    "minimax_h3_local_gguf runs the bundled unsloth GGUF fl2va workflow "
+                    "(text-to-video, ComfyUI-GGUF, native stereo audio, 24 fps); "
+                    "minimax_h3_ref2va_gguf runs the bundled reference-conditioned GGUF "
+                    "workflow and requires a reference image."
                 ),
             },
             "reference_image_path": {
@@ -205,6 +275,14 @@ class ComfyUIVideo(BaseTool):
                 "type": "integer",
                 "default": 81,
                 "description": "81 frames = 5s at 16fps",
+            },
+            "steps": {
+                "type": "integer",
+                "default": 20,
+                "description": (
+                    "Sampling steps for the bundled MiniMax H3 GGUF path. "
+                    "Ignored by the bundled WAN 2.2 4-step workflows."
+                ),
             },
             "duration": {
                 "type": "integer",
@@ -309,6 +387,9 @@ class ComfyUIVideo(BaseTool):
         ``progress`` event per sampling step, which would otherwise flood
         stdout on fast GPUs.
         """
+        callback = getattr(self, "_progress_callback", None)
+        if callable(callback):
+            callback(data)
         now = time.monotonic()
         if now - self._last_progress_log < 10:
             return
@@ -337,9 +418,13 @@ class ComfyUIVideo(BaseTool):
 
         _, missing_t2v = self._client.check_models(_REQUIRED_MODELS_T2V)
         _, missing_i2v = self._client.check_models(_REQUIRED_MODELS_I2V)
+        h3_ready = any(
+            not self._client.check_models(spec["required_models"])[1]
+            for spec in _H3_FAMILIES.values()
+        )
         return {
-            "text_to_video": "available" if not missing_t2v else "degraded",
-            "image_to_video": "available" if not missing_i2v else "degraded",
+            "text_to_video": "available" if (not missing_t2v or h3_ready) else "degraded",
+            "image_to_video": "available" if (not missing_i2v or h3_ready) else "degraded",
         }
 
     def is_operation_available(self, operation: str) -> bool:
@@ -355,6 +440,8 @@ class ComfyUIVideo(BaseTool):
         info["bundled_model_stacks"] = {
             "text_to_video": BUNDLED_MODEL_STACKS["wan22-t2v-4step"],
             "image_to_video": BUNDLED_MODEL_STACKS["wan22-i2v-4step"],
+            "minimax_h3_local_gguf": BUNDLED_MODEL_STACKS["minimax-h3-fl2va-gguf"],
+            "minimax_h3_ref2va_gguf": BUNDLED_MODEL_STACKS["minimax-h3-ref2va-gguf"],
         }
         info["resource_profile_note"] = (
             "The top-level resource_profile is a ComfyUI provider floor, not a "
@@ -372,6 +459,13 @@ class ComfyUIVideo(BaseTool):
                 "hosted": False,
                 "network_required": False,
                 "cost": "local compute",
+            },
+            "minimax_h3_local_gguf": {
+                "hosted": False,
+                "network_required": False,
+                "cost": "local compute",
+                "fps": 24,
+                "native_audio": True,
             },
             "gemini_omni_flash": {
                 "hosted": True,
@@ -406,6 +500,13 @@ class ComfyUIVideo(BaseTool):
 
     def estimate_runtime(self, inputs: dict[str, Any]) -> float:
         operation = inputs.get("operation", "text_to_video")
+        if str(inputs.get("model_family")) in _H3_FAMILIES:
+            # ~20 steps of a 20B-class denoiser plus the 27GB text encoder on
+            # a local GPU; measured 2 min for a 1.6 s / 8-step probe, so a
+            # 5 s / 20-step clip is a 10-20 min class render. Reference
+            # conditioning keeps the reference tokens in every step.
+            family = str(inputs.get("model_family"))
+            return 1200.0 if _H3_FAMILIES[family]["requires_reference"] else 900.0
         if operation == "image_to_video":
             return 210.0  # ~3.5 min
         return 240.0  # ~4 min
@@ -495,11 +596,32 @@ class ComfyUIVideo(BaseTool):
                         f"See data.missing_models for destination hints and download URLs."
                     ),
                 )
+
+        if not custom_workflow and model_family in _H3_FAMILIES:
+            spec = _H3_FAMILIES[model_family]
+            _, missing = self._client.check_models(spec["required_models"])
+            if missing:
+                return ToolResult(
+                    success=False,
+                    data=missing_models_payload(
+                        missing,
+                        workflow_key=spec["workflow_key"],
+                        workflow_name=spec["workflow"],
+                        operation=operation,
+                    ),
+                    error=(
+                        f"ComfyUI server is running but missing MiniMax H3 GGUF models "
+                        f"for {model_family}: {', '.join(missing)}.\n"
+                        f"See data.missing_models for destination hints and download URLs."
+                    ),
+                )
         start = time.time()
         seed = inputs.get("seed") or ComfyUIClient.random_seed()
         output_path = Path(
             inputs.get("output_path", f"comfyui_video_{operation}_{seed}.mp4")
         )
+        # Optional in-process hook used by external studios to stream step progress.
+        self._progress_callback = inputs.get("_progress_callback")
 
         try:
             if custom_workflow:
@@ -513,6 +635,10 @@ class ComfyUIVideo(BaseTool):
                         "and enable Partner Nodes. These are hosted API nodes, not offline models."
                     )
                 workflow, output_node = self._build_partner_t2v(
+                    inputs, seed, output_path, model_family
+                )
+            elif model_family in _H3_FAMILIES:
+                workflow, output_node = self._build_minimax_h3_local(
                     inputs, seed, output_path, model_family
                 )
             elif operation == "image_to_video":
@@ -575,16 +701,23 @@ class ComfyUIVideo(BaseTool):
                 }
             )
         else:
-            width = inputs.get("width", 832 if operation == "text_to_video" else 640)
-            height = inputs.get("height", 480 if operation == "text_to_video" else 640)
-            num_frames = inputs.get("num_frames", 81)
+            if model_family in _H3_FAMILIES:
+                width = _snap32(inputs.get("width", 1344))
+                height = _snap32(inputs.get("height", 768))
+                num_frames = _h3_length(inputs)
+                fps = _H3_FPS
+            else:
+                width = inputs.get("width", 832 if operation == "text_to_video" else 640)
+                height = inputs.get("height", 480 if operation == "text_to_video" else 640)
+                num_frames = inputs.get("num_frames", 81)
+                fps = 16
             result_data.update(
                 {
                     "width": width,
                     "height": height,
                     "num_frames": num_frames,
-                    "fps": 16,
-                    "duration_seconds": round(num_frames / 16, 2),
+                    "fps": fps,
+                    "duration_seconds": round(num_frames / fps, 2),
                 }
             )
         wall = round(time.time() - start, 3)
@@ -687,6 +820,79 @@ class ComfyUIVideo(BaseTool):
         )
         return workflow, _I2V_OUTPUT_NODE
 
+    def _build_minimax_h3_local(
+        self,
+        inputs: dict[str, Any],
+        seed: int,
+        output_path: Path,
+        model_family: str = "minimax_h3_local_gguf",
+    ) -> tuple[dict, str]:
+        """Bundled MiniMax H3 GGUF workflows with native stereo audio.
+
+        Mirrors ComfyUI's official ``video_minimax_h3_t2v`` / ``..._r2v`` graphs,
+        with the denoiser loaded through ComfyUI-GGUF. ``fl2va`` accepts text
+        plus zero, one or two anchor frames (text_to_video, or image_to_video
+        via ``first_frame``); ``ref2va`` conditions on reference images held
+        through every sampling step and requires at least one.
+        """
+        spec = _H3_FAMILIES[model_family]
+        width = _snap32(inputs.get("width", 1344))
+        height = _snap32(inputs.get("height", 768))
+        length = _h3_length(inputs)
+        steps = int(inputs.get("steps", 20))
+
+        workflow = ComfyUIClient.load_workflow(_WORKFLOWS / spec["workflow"])
+        workflow = ComfyUIClient.patch_workflow(
+            workflow,
+            {
+                "5": {
+                    "prompt": inputs["prompt"],
+                    "width": width,
+                    "height": height,
+                    "length": length,
+                },
+                "8": {"steps": steps},
+                "9": {"noise_seed": seed},
+                "14": {"filename_prefix": output_path.stem},
+            },
+        )
+
+        if not bool(inputs.get("generate_audio", True)):
+            # Drop the audio decode + mux so the clip is silent.
+            del workflow["12"]
+            workflow["13"]["inputs"].pop("audio", None)
+
+        ref_path = inputs.get("reference_image_path")
+        ref_url = inputs.get("reference_image_url")
+        needs_reference = spec["requires_reference"] or (
+            inputs.get("operation", "text_to_video") == "image_to_video"
+        )
+        if needs_reference:
+            if ref_url and not ref_path:
+                resp = requests.get(ref_url, timeout=60)
+                resp.raise_for_status()
+                ref_path = str(output_path.with_suffix(".ref.png"))
+                Path(ref_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(ref_path).write_bytes(resp.content)
+            if not ref_path:
+                raise ComfyUIError(
+                    f"{model_family} requires reference_image_path or "
+                    f"reference_image_url."
+                )
+            server_name = self._client.upload_image(
+                Path(ref_path), f"om_{output_path.stem}.png"
+            )
+            workflow["15"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": server_name},
+            }
+            if spec["requires_reference"]:
+                workflow["5"]["inputs"]["ref_images.ref_image_0"] = ["15", 0]
+            else:
+                workflow["5"]["inputs"]["first_frame"] = ["15", 0]
+
+        return workflow, spec["output_node"]
+
     @staticmethod
     def _probe_media(path: Path) -> dict[str, Any]:
         """Measure the downloaded clip instead of trusting the request.
@@ -726,12 +932,15 @@ class ComfyUIVideo(BaseTool):
     @staticmethod
     def _model_name(inputs: dict[str, Any], custom_workflow: bool) -> str:
         if not custom_workflow:
+            family = str(inputs.get("model_family", "wan2.2"))
+            if family in _H3_FAMILIES:
+                return _H3_FAMILIES[family]["model_name"]
             return {
                 "wan2.2": "wan2.2-14b-fp8-4step",
                 "gemini_omni_flash": "gemini-omni-flash-preview (ComfyUI Partner Node)",
                 "seedance_2.5": "Seedance 2.5 (ComfyUI Partner Node)",
                 "minimax_h3_api": "MiniMax-H3 (ComfyUI Partner Node)",
-            }.get(str(inputs.get("model_family", "wan2.2")), "custom-comfyui-model")
+            }.get(family, "custom-comfyui-model")
         if str(inputs.get("model_family")) == "ltx_2.5_local":
             return inputs.get("workflow_model") or "LTX-2.5 (local ComfyUI workflow)"
         if str(inputs.get("model_family")) == "minimax_h3_local":
@@ -765,6 +974,16 @@ class ComfyUIVideo(BaseTool):
                 "network_required": True,
                 "billing": "ComfyUI Partner Node credits",
                 "workflow_hash_sha256": workflow_hash(workflow),
+                "output_node": output_node,
+            }
+        if not custom_workflow and model_family in _H3_FAMILIES:
+            spec = _H3_FAMILIES[model_family]
+            return {
+                "source": "bundled",
+                "workflow": spec["workflow"],
+                "model_family": model_family,
+                "workflow_hash_sha256": workflow_hash(workflow),
+                "model_stack": model_stack(spec["workflow_key"], inputs),
                 "output_node": output_node,
             }
         if not custom_workflow:

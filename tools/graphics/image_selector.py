@@ -106,6 +106,13 @@ class ImageSelector(BaseTool):
                 "type": "string",
                 "description": "Provider-specific model name passed through when supported.",
             },
+            "model_family": {
+                "type": "string",
+                "description": (
+                    "Local/runtime model family passed through when supported, e.g. "
+                    "comfyui_image's flux2 or qwen_image_2_1_turbo_gguf."
+                ),
+            },
             "model": {
                 "type": "string",
                 "description": "Exact provider model id, e.g. an Atlas Cloud live model route.",
