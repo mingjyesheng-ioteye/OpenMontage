@@ -16,6 +16,11 @@ import { ProductReveal, ProductRevealProps } from "./components/ProductReveal";
 import { CaptionOverlay, WordCaption } from "./components/CaptionOverlay";
 import { CollageBurst, CollageBurstProps } from "./CollageBurst";
 import { LyricOverlay, LyricOverlayProps, calculateLyricOverlayMetadata } from "./LyricOverlay";
+import {
+  LessonVideo,
+  LessonProps,
+  calculateLessonMetadata,
+} from "./LessonVideo";
 
 // ---------------------------------------------------------------------------
 // Theme System — prevents every video from looking like dark fintech
@@ -297,6 +302,20 @@ export const Root: React.FC = () => {
           bottomY: 0.88,
         } as LyricOverlayProps}
         calculateMetadata={calculateLyricOverlayMetadata}
+      />
+      <Composition
+        id="LessonVideo"
+        component={LessonVideo}
+        durationInFrames={30 * 60}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={{
+          slides: [],
+          captions: true,
+          showAssessment: true,
+        } as LessonProps}
+        calculateMetadata={calculateLessonMetadata}
       />
       <Composition
         id="EndTag"

@@ -5,11 +5,11 @@
 Two artifacts:
 
 1. `artifacts/script.json` — the canonical script artifact (schema-valid).
-2. `artifacts/lesson_module.json` — the bb_video module the renderer consumes.
+2. `artifacts/lesson_module.json` — the lesson module the renderer consumes.
 
-The module JSON is the contract with `bb_video`; if it is wrong, the render
-fails or the narration drifts off the slides. Copy the shape from
-`bb_video/src/data/bb_exam/m01.json`.
+The module JSON is the contract with `lesson_video`; if it is wrong, the render
+fails or the narration drifts off the slides. The shape below is the whole
+contract — no extra keys are required.
 
 ## Converting a bb_exam module
 
@@ -17,11 +17,11 @@ When `artifacts/bb_exam_source.json` has `kind: "bb_exam"`, the module content i
 already authored (title, summary, objectives, blocks, conversation, quiz). Map
 it — do not re-research:
 
-| bb_exam field | bb_video output |
+| bb_exam field | Lesson module field |
 |---|---|
 | course/module title | `title` slide (`heading`, `sub` = course · module) |
-| `objectives[]` | `objectives` slide; narration reads them as outcomes |
-| each `blocks[]` | one `content` slide: `heading` = block title, narration = block body, tightened to 25–60 spoken words |
+| `objectives[]` | `objectives` slide; narration reads them as outcomes; put them in `bullets[]` |
+| each `blocks[]` | one `content` slide: `heading` = block title, narration = block body, tightened to 25–60 spoken words; short labels in `bullets[]` |
 | `conversation[]` | examples/phrasing for narration; instructor turns can become the opening or recap voice |
 | `quiz[]` | carry prompts/options only if `answer` indexes are known; otherwise omit `assessment` (the LMS quiz remains authoritative) |
 | `summary` | recap narration |
@@ -40,15 +40,14 @@ source does not support.
   "level": "Entry (E)",
   "moduleIndex": 1,
   "moduleTotal": 7,
-  "presenter": { "mode": "none", "layout": "pip-br", "name": "Avery Quinn",
-                 "role": "Training Instructor", "accentColor": "#FFD166" },
-  "voice": "af_heart",
-  "voiceProvider": "kokoro",
   "slides": [
     { "kind": "title", "heading": "…", "sub": "…", "narration": "…" },
-    { "kind": "objectives", "heading": "…", "narration": "…" },
-    { "kind": "content", "heading": "…", "narration": "…" },
-    { "kind": "recap", "heading": "…", "narration": "…" }
+    { "kind": "objectives", "heading": "What you will be able to do",
+      "bullets": ["…", "…"], "narration": "…" },
+    { "kind": "content", "heading": "…", "sub": "…",
+      "bullets": ["Escape", "Attention"], "narration": "…" },
+    { "kind": "recap", "heading": "Recap",
+      "bullets": ["…"], "narration": "…" }
   ],
   "assessment": {
     "passingPercent": 75,
@@ -57,7 +56,10 @@ source does not support.
 }
 ```
 
-Do **not** hand-write `durationInFrames`, `audioSrc` or `captions` — `bb_video`
+`bullets[]` (≤ 5) is the on-screen text; `narration` is spoken only. A slide with
+no narration renders as a still card for ~4.5 s (handy for a quiz-only slide).
+
+Do **not** hand-write `durationMs`, `audioSrc` or `captionWords` — `lesson_video`
 fills those during TTS/captioning.
 
 ## Narration Rules

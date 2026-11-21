@@ -4,24 +4,26 @@
 
 Use this pipeline when the deliverable is a **BrainBook lesson video**: a branded,
 narrated module with slides, word-level captions, an optional presenter, and a
-quiz — rendered by the `bb_video` Remotion project. It is the right pipeline for
-training modules, onboarding lessons, and course content, not for cinematic
-trailers or ad-hoc social clips.
+quiz — rendered by OpenMontage's own `lesson_video` tool. It is the right
+pipeline for training modules, onboarding lessons, and course content, not for
+cinematic trailers or ad-hoc social clips.
 
 ## Runtime
 
-Lock `render_runtime = "remotion"`. The renderer is the external `bb_video`
-project (`scripts/build-lesson.sh` → Remotion composition `BrainBookLesson`);
-HyperFrames (lowercase `hyperframes` in the decision log) is not a viable
-runtime for this pipeline — there is no HTML counterpart to the lesson
-composition. Per AGENT_GUIDE.md, say so explicitly and record a
-`render_runtime_selection` decision with hyperframes as
-`rejected_because: "BrainBook Video renders through the bb_video Remotion project"`.
+Lock `render_runtime = "remotion"`. The renderer is OpenMontage-native: the
+`lesson_video` tool synthesizes narration with an OpenMontage voice provider and
+renders the `LessonVideo` composition in `remotion-composer/`. HyperFrames
+(lowercase `hyperframes` in the decision log) is not a viable runtime for this
+pipeline — there is no HTML counterpart to the lesson deck. Per AGENT_GUIDE.md,
+say so explicitly and record a `render_runtime_selection` decision with
+hyperframes as `rejected_because: "the lesson deck exists only as the Remotion
+LessonVideo composition"`.
 
 ## Reference Inputs
 
-- `bb_video/src/data/bb_exam/m01.json` — the module JSON shape (read it before scripting)
-- `bb_video/README.md` and `scripts/build-lesson.sh` — renderer contract and env knobs
+- `skills/pipelines/brainbook-video/script-director.md` — the lesson module
+  contract (read it before scripting)
+- `tools/video/lesson_video.py` — renderer inputs, timeline and caption modes
 - `skills/creative/storytelling.md`
 
 ## Lesson Source (check before anything else)
@@ -61,15 +63,16 @@ Record these choices in the brief — they become provider inputs at compose:
 
 | Choice | Default | Alternatives |
 |---|---|---|
-| Voice | `kokoro` / `af_heart` (local) | `edge`, `elevenlabs`, `openai`, `azure` |
-| Presenter | `kenburns` (still portrait, no lip sync) | `placeholder`, `sadtalker_gpu` (Windows GPU service), `heygen`, `d_id` |
-| Captions | `auto` (word-level) | `none`, `fast` |
-| Music | `none` | `acestep` (local), `elevenlabs`, `fal` |
-| B-roll | `none` | `wan` (local), `replicate`, `fal`; `t2v`/`i2v` |
+| Voice | `piper` / `en_US-lessac-medium` (local, free) | `azure` (`en-US-AndrewMultilingualNeural`), `elevenlabs`, `openai` |
+| Presenter | `pip-br` still portrait | `side-right`, `full`, `none`; lip-sync is **not** supported here |
+| Captions | `auto` (word-level) | `none` |
+| Music | `none` | any music bed file at ≤ 0.15 volume |
+| B-roll | `none` | not supported by the lesson renderer |
 
-Only promise a provider that is actually available. `bb_video` silently falls
-back to a placeholder presenter when a GPU/cloud avatar backend is unavailable —
-surface that risk now, not after the render.
+Only promise a provider that is actually available. Local piper is always the
+safe default; cloud voices need their key in the OpenMontage `.env`. Lip-synced
+avatar video is a different pipeline (`avatar-spokesperson`) — say so now, not
+after the render.
 
 ### 3. Build the brief
 

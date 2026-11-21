@@ -1431,20 +1431,31 @@ Setup, auth, and the either/or workflow are documented in
 
 ### BrainBook Video — Lesson Renderer
 
-**Tool:** `bb_video_lesson` · **Pipeline:** `brainbook-video`
+**Tools:** `lesson_video` (render), `bb_exam_media` (delivery) ·
+**Pipeline:** `brainbook-video`
 
-**Env var:** `BB_VIDEO_DIR` (default: sibling `../bb_video`)
+Renders a lesson module JSON (slides + narration + assessment) natively in
+OpenMontage — no external renderer checkout:
 
-Wraps the external **bb_video** Remotion project. It takes a module JSON
-(slides + narration + assessment) and renders the finished lesson: TTS
-narration, word-level captions, avatar presenter, music, b-roll, then Remotion.
+1. narration per slide through an OpenMontage TTS tool — `piper` locally by
+   default, or `azure` / `elevenlabs` / `openai` when their keys are configured;
+2. timeline from real `ffprobe` durations (+ ~0.55 s per slide);
+3. word-level captions from provider alignment (ElevenLabs), else
+   `transcriber` / faster-whisper, else proportional word timing (reported as
+   such);
+4. a Remotion render of the `LessonVideo` composition
+   (`remotion-composer/src/LessonVideo.tsx`): title / objectives / content /
+   recap slides, optional presenter frame, progress bar, and knowledge-check
+   cards from `assessment.questions`.
 
 The `brainbook-video` pipeline authors the module across `idea → script →
-scene_plan → assets → edit` and calls `bb_video_lesson` once at `compose`. A
-bb_video checkout with `node_modules` and its venvs is required; provider
-defaults are kokoro (local voice), `kenburns` presenter, captions `auto`, and no
-music or b-roll. Stage guidance lives in
-`skills/pipelines/brainbook-video/`.
+scene_plan → assets → edit` and calls `lesson_video` once at `compose`.
+Requirements: Node/npx with `remotion-composer/node_modules`, `ffmpeg`/`ffprobe`,
+and at least one TTS provider. `bb_exam_media` uploads finished media into a
+bb_exam course version (slug + module key, credentials from `BB_EXAM_TOKEN` or
+`BB_EXAM_EMAIL`/`BB_EXAM_PASSWORD`) and is only used at publish with approval.
+Stage guidance lives in `skills/pipelines/brainbook-video/`; the module contract,
+caption modes and tuning are in [`LESSON_VIDEO.md`](LESSON_VIDEO.md).
 
 ---
 

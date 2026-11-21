@@ -28,8 +28,8 @@ Each scene maps 1:1 to a module slide:
 - **Kinds alternate deliberately.** `title` → `objectives` → `content…` → `recap`.
   Do not open with a content slide or end without a recap.
 - **Timing is narration-driven.** Estimate seconds from words at ~2.5 words/sec
-  plus 0.4 s of breathing room; `bb_video` replaces the estimate with the real
-  audio duration.
+  plus 0.4 s of breathing room; the lesson renderer replaces the estimate with
+  the real audio duration.
 - **Brand stays consistent.** Accent color, course label and module position come
   from the brief and appear on the title slide.
 

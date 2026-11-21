@@ -13,7 +13,8 @@ def test_manifest_declares_the_renderer_stages() -> None:
         "idea", "script", "scene_plan", "assets", "edit", "compose", "publish"
     ]
     compose = next(stage for stage in manifest["stages"] if stage["name"] == "compose")
-    assert "bb_video_lesson" in compose["required_tools"]
+    assert "lesson_video" in compose["required_tools"]
+    assert "lesson_video" in compose["tools_available"]
 
 
 def test_stage_and_meta_skills_exist() -> None:
@@ -30,4 +31,13 @@ def test_stage_and_meta_skills_exist() -> None:
 def test_metadata_titles_the_pipeline() -> None:
     manifest = load_pipeline("brainbook-video")
     assert manifest["metadata"]["title"] == "BrainBook Video"
-    assert manifest["metadata"]["renderer"] == "bb_video"
+    assert manifest["metadata"]["renderer"] == "lesson_video"
+    assert manifest["metadata"]["render_composition"] == (
+        "remotion-composer/src/LessonVideo.tsx"
+    )
+
+
+def test_publish_stage_can_deliver_to_the_lms() -> None:
+    manifest = load_pipeline("brainbook-video")
+    publish = next(stage for stage in manifest["stages"] if stage["name"] == "publish")
+    assert "bb_exam_media" in publish["tools_available"]

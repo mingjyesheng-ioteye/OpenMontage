@@ -23,12 +23,25 @@ presenter without rewriting the content.
 ## Delivery
 
 - **Local package**: copy the video + module JSON into the agreed folder and
-  record both absolute paths.
+  record both absolute paths (`export_bundle` writes the package and a
+  `publish_log` entry).
 - **bb_exam (when the project has a source)**: `artifacts/bb_exam_source.json`
-  names the course slug and module key. Deliver the lesson into that
-  course/module media with `bb_video/scripts/deliver-to-bb-exam.mjs`
-  (`--file`, `--slug`, `--module`; credentials from `BB_EXAM_TOKEN` or
-  `BB_EXAM_EMAIL`/`BB_EXAM_PASSWORD`). Only do this with explicit approval.
+  names the course slug and module key. Deliver with the native
+  `bb_exam_media` tool:
+
+  ```json
+  {
+    "file_path": "projects/<id>/assets/video/<module>.mp4",
+    "module_key": "functions-and-causes-of-behavior",
+    "slug": "understanding-behavior",
+    "kind": "lesson_video"
+  }
+  ```
+
+  It resolves the published course/version from the slug, signs in with
+  `BB_EXAM_EMAIL` / `BB_EXAM_PASSWORD` (or uses `BB_EXAM_TOKEN`), and uploads to
+  the module's media. Only do this with explicit approval — it changes what
+  learners see.
 - **Library**: add the finished video to the project's `renders/` if the user
   asked for a board-visible deliverable.
 
@@ -38,8 +51,8 @@ Record:
 
 - deliverable paths and sizes,
 - module/course identifiers and the quiz passing threshold,
-- provider choices used in the final render (voice, presenter, music, b-roll),
-- where it was delivered and how (copy, upload, manual),
+- provider choices used in the final render (voice, captions mode, presenter, music),
+- where it was delivered and how (export bundle, bb_exam upload, manual copy),
 - any skipped deliverable and why.
 
 ## Quality Gate

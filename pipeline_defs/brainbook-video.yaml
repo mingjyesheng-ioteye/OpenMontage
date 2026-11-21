@@ -3,18 +3,19 @@ version: "2.0"
 description: >
   BrainBook Video — branded, narrated, captioned lesson videos from a course
   module. Authoring stages shape the module (slides, narration, assessment,
-  presenter and sound plan); the compose stage renders it through the bb_video
-  Remotion project, which owns TTS, word-level captions, avatar presenter,
-  music and b-roll. Produces lesson.mp4 plus the quiz data.
+  presenter and sound plan); the compose stage renders it natively with
+  OpenMontage's `lesson_video` tool: per-slide TTS through an OpenMontage voice
+  provider, narration-driven timeline, word-level captions, and the Remotion
+  `LessonVideo` composition. Produces lesson.mp4 plus the quiz data.
 category: custom
 stability: beta
 default_checkpoint_policy: guided
 
 metadata:
   title: BrainBook Video
-  renderer: bb_video
-  external_repo: ../bb_video
-  module_schema: bb_video/src/data/bb_exam/m01.json
+  renderer: lesson_video
+  render_composition: remotion-composer/src/LessonVideo.tsx
+  module_contract: lesson module JSON (see script-director)
 
 extensions:
   custom_scripts: true
@@ -80,10 +81,10 @@ stages:
       - Narration is spoken copy, not an essay
       - Slide count and pacing suit the module runtime
       - The closing recap and assessment match the narrated content
-      - Lesson module JSON follows the bb_video schema
+      - Lesson module JSON follows the documented module contract
     success_criteria:
       - Schema-valid script artifact
-      - A bb_video module JSON (slides + narration + assessment) is written beside it
+      - A lesson module JSON (slides + narration + assessment) is written beside it
 
   - name: scene_plan
     skill: pipelines/brainbook-video/scene-director
@@ -148,15 +149,15 @@ stages:
     produces:
       - render_report
     required_tools:
-      - bb_video_lesson
+      - lesson_video
     tools_available:
-      - bb_video_lesson
+      - lesson_video
     checkpoint_required: true
     human_approval_default: false
     review_focus:
       - The rendered MP4 exists and probes cleanly
       - Narration, captions and slides are in sync
-      - Provider fallbacks (placeholder avatar, no music) are recorded honestly
+      - Voice fallbacks and caption mode are recorded honestly
     success_criteria:
       - Schema-valid render_report artifact
       - Output file exists and includes narration and captions
@@ -170,13 +171,15 @@ stages:
       - script
     produces:
       - publish_log
-    tools_available: []
+    tools_available:
+      - export_bundle
+      - bb_exam_media
     checkpoint_required: true
     human_approval_default: true
     review_focus:
-      - Export package and metadata are complete
+      - The export package and metadata are complete
       - Quiz data and passing threshold travel with the lesson
-      - Delivery target and naming are explicit
+      - Any LMS delivery is explicit, approved and recorded
     success_criteria:
       - Schema-valid publish_log artifact
       - Deliverable paths and metadata recorded

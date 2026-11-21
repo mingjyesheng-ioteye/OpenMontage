@@ -2,52 +2,57 @@
 
 ## Output
 
-`artifacts/edit_decisions.json` — the render settings handed to compose. In this
-pipeline the *module JSON is the timeline*: there is no manual cut list, and no
-Remotion source edits.
+`artifacts/edit_decisions.json` — the render contract the compose stage follows.
 
-**Runtime routing:** `render_runtime` must be `remotion` for this pipeline.
-HyperFrames is not an option here — `bb_video` ships a single Remotion
-composition (`BrainBookLesson`) and there is no HyperFrames counterpart. If the
-locked runtime is somehow unavailable, stop and surface the constraint; do not
-silently swap runtimes.
+## Runtime Selection (MANDATORY)
+
+The lesson deck is a branded, slide-based composition, so:
+
+- **Remotion** — the only runtime that renders the `LessonVideo` composition
+  (slide layout, presenter frame, progress, knowledge-check cards).
+- **HyperFrames** (`hyperframes`) — rejected for this pipeline: there is no HTML
+  counterpart to the lesson deck.
+- **FFmpeg** — only for trimming or concatenating an already rendered lesson,
+  never for authoring one.
+
+Say this explicitly in `decision_log` rather than silently narrowing the choice.
 
 ## Decisions To Record
 
 ```json
 {
-  "render_runtime": "remotion",
-  "renderer": "bb_video_lesson",
-  "module_path": "artifacts/lesson_module.json",
-  "voice_provider": "kokoro",
-  "voice": "af_heart",
-  "caption_mode": "auto",
-  "presenter": { "provider": "kenburns", "layout": "pip-br",
-                 "portrait_path": "…" },
-  "music": { "provider": "none" },
-  "broll": { "provider": "none", "mode": "t2v", "scope": "module" },
-  "render": { "output_path": "assets/video/m01.mp4" }
+  "renderer": "lesson_video",
+  "runtime": "remotion",
+  "composition": "LessonVideo",
+  "voice_provider": "piper",
+  "voice": "en_US-lessac-medium",
+  "rate": 1.0,
+  "captions": "auto",
+  "caption_words_per_page": 4,
+  "presenter": { "layout": "pip-br", "portrait_path": "…" },
+  "music": { "path": "…", "volume": 0.12 },
+  "theme": "clean-professional",
+  "output": "assets/video/<module>.mp4"
 }
 ```
 
-Copy provider values from the asset manifest — do not invent new ones here. If a
-decision changes after review (e.g. presenter switched to `placeholder`), append
-a `decision_log` entry with the same category and subject.
-
 ## Rules
 
-- **Presenter layout** is one of `pip-br`, `side-right`, `side-left`, `full`.
-  `pip-br` keeps the slide readable; `full` is only for a talking-head opener.
-- **Captions stay on** unless the brief explicitly waives them; word-level
-  captions are a core deliverable of this pipeline.
-- **Music** never sits above the narration; if a track is used, keep it under
-  -18 dB relative to voice or skip it.
-- **Do not trim slides manually.** If timing is wrong, fix narration length in
-  the script stage and re-run; the renderer derives durations from audio.
-- **Render concurrency** is handled by `bb_video` (CPU-bound); don't add flags.
+- **Presenter** is a still portrait in a frame (`pip-br`, `side-right`), not a
+  lip-synced avatar. If the brief promised lip sync, record
+  `missing_capabilities: ["lip_sync"]` and offer the avatar pipeline instead.
+- **Captions** are burned in by the renderer; `captions: "none"` is valid when
+  the LMS player owns caption display.
+- **Music** is a single bed at ≤ 0.15 volume, or omitted. It never replaces
+  narration.
+- **Theme** comes from the chosen playbook (`clean-professional`,
+  `flat-motion-graphics`, …); the accent color may be overridden to match brand.
+- **Render concurrency** is handled by the tool; don't hand-tune Remotion flags
+  unless a render is timing out.
 
 ## Quality Gate
 
-- every field compose needs is present and matches the asset manifest,
-- the output path lives under the project workspace,
-- changed decisions have decision-log entries.
+- every decision maps to a `lesson_video` input,
+- the presenter/music/caption choices match `asset_manifest.json`,
+- the output path and filename follow the publish naming rule,
+- rejected runtimes carry a reason.
