@@ -657,6 +657,18 @@ class LessonVideo(BaseTool):
                 "enum": ["wav2lip", "musetalk", "sadtalker"],
                 "description": "Talking-head engine (default wav2lip, the fastest)",
             },
+            "avatar_clip_path": {
+                "type": "string",
+                "description": "Pre-rendered presenter clip (cloud avatar). Muted and used instead of local lip sync.",
+            },
+            "timeline_only": {
+                "type": "boolean",
+                "description": "Build narration audio/timeline and stop (no render). Used before cloud avatar generation.",
+            },
+            "audio_track_out": {
+                "type": "string",
+                "description": "Where to write the combined narration track for timeline_only.",
+            },
             "presenter_layout": {
                 "type": "string",
                 "enum": ["none", "pip-br", "side-right", "full"],
@@ -1102,6 +1114,30 @@ class LessonVideo(BaseTool):
                         "or supply broll_path per slide)"
                     )
 
+        if inputs.get("timeline_only"):
+            track = Path(
+                str(inputs.get("audio_track_out") or (assets_dir / "avatar-track.wav"))
+            ).expanduser()
+            if not track.is_absolute():
+                track = (Path.cwd() / track).resolve()
+            track.parent.mkdir(parents=True, exist_ok=True)
+            if not _build_narration_track(timeline, quiz_ms, assets_dir, track):
+                return ToolResult(
+                    success=False,
+                    error="Could not build the narration track for the cloud presenter.",
+                )
+            return ToolResult(
+                success=True,
+                data={
+                    "track_path": str(track),
+                    "slides": len(timeline),
+                    "narration_seconds": round(narration_ms / 1000, 1),
+                    "duration_ms": sum(int(item["durationMs"]) for item in timeline) + quiz_ms,
+                },
+                artifacts=[str(track)],
+                model="lesson-video-timeline",
+            )
+
         # --------------------------------------------------------------
         # Presenter lip sync — one clip across the whole narration track
         # --------------------------------------------------------------
@@ -1113,7 +1149,18 @@ class LessonVideo(BaseTool):
         avatar_seconds = 0.0
         avatar_used = "none"
 
-        if avatar_provider == "auto" and portrait and layout != "none":
+        clip_path = inputs.get("avatar_clip_path")
+        if clip_path:
+            clip = Path(str(clip_path)).expanduser()
+            if not clip.is_absolute():
+                clip = (Path.cwd() / clip).resolve()
+            if clip.is_file() and clip.stat().st_size > 0:
+                avatar_file = clip
+                avatar_used = "cloud"
+            else:
+                warnings.append(f"avatar: cloud clip not found at {clip}")
+
+        if avatar_file is None and avatar_provider == "auto" and portrait and layout != "none":
             portrait_file = Path(str(portrait)).expanduser()
             if not portrait_file.is_absolute():
                 portrait_file = (Path.cwd() / portrait_file).resolve()
@@ -1217,21 +1264,23 @@ class LessonVideo(BaseTool):
                 music_src = f"music{music_file.suffix}"
 
             presenter = None
-            if portrait and layout != "none":
-                portrait_file = Path(str(portrait)).expanduser()
-                if not portrait_file.is_absolute():
-                    portrait_file = (Path.cwd() / portrait_file).resolve()
-                if not portrait_file.is_file():
-                    return ToolResult(
-                        success=False, error=f"Presenter portrait not found: {portrait_file}"
-                    )
-                shutil.copy2(portrait_file, public_dir / f"portrait{portrait_file.suffix}")
+            if (portrait or avatar_file is not None) and layout != "none":
                 presenter = {
-                    "portraitSrc": f"portrait{portrait_file.suffix}",
                     "layout": layout or "pip-br",
                     "name": inputs.get("presenter_name") or "",
                     "role": inputs.get("presenter_role") or "",
                 }
+                if portrait:
+                    portrait_file = Path(str(portrait)).expanduser()
+                    if not portrait_file.is_absolute():
+                        portrait_file = (Path.cwd() / portrait_file).resolve()
+                    if not portrait_file.is_file():
+                        return ToolResult(
+                            success=False,
+                            error=f"Presenter portrait not found: {portrait_file}",
+                        )
+                    shutil.copy2(portrait_file, public_dir / f"portrait{portrait_file.suffix}")
+                    presenter["portraitSrc"] = f"portrait{portrait_file.suffix}"
                 if avatar_file is not None:
                     shutil.copy2(avatar_file, public_dir / "avatar.mp4")
                     presenter["videoSrc"] = "avatar.mp4"
