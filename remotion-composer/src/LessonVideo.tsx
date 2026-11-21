@@ -902,12 +902,17 @@ const Presenter: React.FC<{
   presenter: LessonPresenter;
   theme: ThemeConfig;
   accent: string;
-}> = ({ presenter, theme, accent }) => {
+  /** Frame windows where the presenter should sit on the left (b-roll panel). */
+  pipWindows?: Array<{ from: number; to: number; left: boolean }>;
+}> = ({ presenter, theme, accent, pipWindows }) => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
   const progress = interpolate(frame, [0, Math.max(1, durationInFrames)], [0, 1], {
     extrapolateRight: "clamp",
   });
+  const pipLeft =
+    pipWindows?.find((window) => frame >= window.from && frame < window.to)?.left ??
+    false;
 
   if (!presenter.portraitSrc && !presenter.videoSrc) return null;
 
@@ -969,12 +974,12 @@ const Presenter: React.FC<{
     );
   }
 
-  // pip-br
+  // pip-br (moves to the left on slides with a b-roll panel)
   return (
     <div
       style={{
         position: "absolute",
-        right: 92,
+        ...(pipLeft ? { left: 96 } : { right: 92 }),
         bottom: 104,
         width: 320,
         height: 320,
@@ -1083,7 +1088,18 @@ export const LessonVideo: React.FC<LessonProps> = (props) => {
     presenter?.layout === "side-right" || presenter?.layout === "full";
   const contentPadding = sidePresenter ? 520 : 0;
 
+  const slideWindows: Array<{ from: number; frames: number; left: boolean }> = [];
   let cursor = 0;
+  for (const slide of slides) {
+    const frames = slideFrames(slide, fps);
+    slideWindows.push({
+      from: cursor,
+      frames,
+      left: Boolean(slide.brollSrc) && (slide.brollLayout || "panel") === "panel",
+    });
+    cursor += frames;
+  }
+  const quizStart = cursor;
 
   return (
     <AbsoluteFill style={{ backgroundColor: theme.backgroundColor }}>
@@ -1095,9 +1111,9 @@ export const LessonVideo: React.FC<LessonProps> = (props) => {
 
       <div style={{ position: "absolute", inset: 0, right: contentPadding }}>
         {slides.map((slide, index) => {
-          const frames = slideFrames(slide, fps);
-          const from = cursor;
-          cursor += frames;
+          const window = slideWindows[index];
+          const from = window.from;
+          const frames = window.frames;
           return (
             <Sequence key={`slide-${index}`} from={from} durationInFrames={frames}>
               {slide.audioSrc ? <Audio src={staticFile(slide.audioSrc)} /> : null}
@@ -1139,7 +1155,7 @@ export const LessonVideo: React.FC<LessonProps> = (props) => {
 
         {questions.length ? (
           <Sequence
-            from={cursor}
+            from={quizStart}
             durationInFrames={Math.round(questions.length * quizSeconds * fps)}
           >
             {questions.map((question, index) => {
@@ -1177,7 +1193,16 @@ export const LessonVideo: React.FC<LessonProps> = (props) => {
         accent={accent}
       />
       {presenter?.portraitSrc || presenter?.videoSrc ? (
-        <Presenter presenter={presenter} theme={theme} accent={accent} />
+        <Presenter
+          presenter={presenter}
+          theme={theme}
+          accent={accent}
+          pipWindows={slideWindows.map((window) => ({
+            from: window.from,
+            to: window.from + window.frames,
+            left: window.left,
+          }))}
+        />
       ) : null}
       <Progress accent={accent} theme={theme} />
     </AbsoluteFill>

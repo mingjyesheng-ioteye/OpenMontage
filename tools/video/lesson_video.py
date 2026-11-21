@@ -392,10 +392,10 @@ def _course_context(
     module_source = source.get("module") or {}
     objectives = module.get("objectives") or module_source.get("objectives") or []
     passing = (
-        module.get("passingPercent")
-        or (module.get("assessment") or {}).get("passingPercent")
-        or source.get("passing_percent")
+        source.get("passing_percent")
         or source.get("passing_threshold")
+        or module.get("passingPercent")
+        or (module.get("assessment") or {}).get("passingPercent")
         or (module.get("assessment") or {}).get("passing_percent")
     )
     if isinstance(passing, (int, float)) and 0 < passing <= 1:
@@ -1104,6 +1104,7 @@ class LessonVideo(BaseTool):
                     cached = broll_cache.get(key)
                     if cached is not None:
                         broll_sources[index] = cached
+                        broll_modes.add("stock")
                         continue
 
                 # 2) local generated still (ComfyUI)
@@ -1135,6 +1136,7 @@ class LessonVideo(BaseTool):
                     cached = broll_cache.get(key)
                     if cached is not None:
                         broll_sources[index] = cached
+                        broll_modes.add("generated")
                         continue
 
             if not broll_sources and broll_provider in ("auto", "stock", "generated"):

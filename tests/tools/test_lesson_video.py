@@ -100,8 +100,8 @@ def test_course_context_comes_from_the_bb_exam_source() -> None:
     assert course["moduleTotal"] == 7
     assert course["summary"] == "Every behavior has a purpose."
     assert course["objectives"] == ["Name the functions"]
-    # A module-level passing threshold wins over the course default.
-    assert course["passingPercent"] == 80
+    # The bb_exam source's passing threshold is authoritative over the module copy.
+    assert course["passingPercent"] == 75
     assert course["quizCount"] == 1
 
 
