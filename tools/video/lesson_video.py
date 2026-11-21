@@ -407,6 +407,7 @@ def _course_context(
         or source.get("module_index")
     )
     module_total = module.get("moduleTotal") or source.get("module_total")
+    quiz_count = len(questions) or len(module_source.get("quiz") or [])
     return {
         "title": (
             source.get("course_title")
@@ -424,7 +425,7 @@ def _course_context(
         "summary": module_source.get("summary") or module.get("moduleSummary"),
         "objectives": objectives if isinstance(objectives, list) else [],
         "passingPercent": passing,
-        "quizCount": len(questions),
+        "quizCount": quiz_count,
     }
 
 
@@ -1050,15 +1051,26 @@ class LessonVideo(BaseTool):
                 slide = slides[index]
                 supplied = slide.get("broll_path")
                 if supplied:
-                    candidate = Path(str(supplied)).expanduser()
-                    if not candidate.is_absolute():
-                        candidate = (module_path.parent / candidate).resolve()
-                    if candidate.is_file():
+                    raw = Path(str(supplied)).expanduser()
+                    if raw.is_absolute():
+                        candidates = [raw]
+                    else:
+                        # Relative paths may be written from the module's folder
+                        # (artifacts/) or from the project root; accept both.
+                        candidates = [
+                            module_path.parent / raw,
+                            module_path.parent.parent / raw,
+                            Path.cwd() / raw,
+                        ]
+                    candidate = next((path for path in candidates if path.is_file()), None)
+                    if candidate is not None:
                         kind = "image" if candidate.suffix.lower() in _IMAGE_SUFFIXES else "video"
                         broll_sources[index] = (candidate, kind)
                         broll_modes.add("files")
                         continue
-                    warnings.append(f"broll: supplied clip not found: {candidate}")
+                    warnings.append(
+                        f"broll: supplied clip not found: {str(supplied)!r}"
+                    )
 
                 query = str(slide.get("broll_query") or slide["heading"]).strip()
                 if not query:

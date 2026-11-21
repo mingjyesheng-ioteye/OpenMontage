@@ -105,6 +105,22 @@ def test_course_context_comes_from_the_bb_exam_source() -> None:
     assert course["quizCount"] == 1
 
 
+def test_course_context_counts_the_lms_quiz_when_the_module_has_none() -> None:
+    course = _course_context(
+        {"courseTitle": "Understanding Behavior"},
+        {
+            "module": {
+                "quiz": [
+                    {"prompt": "Q1", "options": []},
+                    {"prompt": "Q2", "options": []},
+                ]
+            }
+        },
+        [],
+    )
+    assert course["quizCount"] == 2
+
+
 def test_course_context_falls_back_to_the_module() -> None:
     course = _course_context(
         {
