@@ -27,19 +27,19 @@ composition. Per AGENT_GUIDE.md, say so explicitly and record a
 ## Lesson Source (check before anything else)
 
 If `artifacts/bb_exam_source.json` exists, the lesson is **not** starting from a
-blank page:
+blank page. The Studio writes this when the user picks a course module:
 
-- `kind: "bb_video_module"` — `artifacts/lesson_module.json` is already written
-  from an existing bb_video lesson. Confirm with the user whether this is a
-  **remaster** (same slides/narration, new voice/presenter/music) or a revision
-  (edit narration/slides before rendering). Do not rewrite it from scratch
-  without approval.
 - `kind: "bb_exam"` — the source is a published bb_exam module (title, summary,
   objectives, blocks, conversation, quiz). Treat those as the approved content:
   convert them to slides and narration in the script stage (see the script
   director), do not research the topic again. The public payload omits quiz
   answer keys; keep the LMS quiz authoritative and omit the module `assessment`
   unless the answers are supplied.
+
+If the project already contains `artifacts/lesson_module.json` (supplied
+manually), treat it as an existing lesson: confirm with the user whether this is
+a **remaster** (same slides/narration, new voice/presenter/music) or a revision
+before changing it.
 
 Record the source in the brief (`source_kind`, `source_course`, `source_module`).
 
