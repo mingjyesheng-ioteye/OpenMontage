@@ -104,6 +104,10 @@ class BbExamMedia(BaseTool):
             "email": {"type": "string", "description": "Service account email"},
             "password": {"type": "string", "description": "Service account password"},
             "timeout_seconds": {"type": "integer"},
+            "dry_run": {
+                "type": "boolean",
+                "description": "Resolve credentials/course/version and stop before uploading.",
+            },
         },
     }
 
@@ -216,6 +220,19 @@ class BbExamMedia(BaseTool):
                 )
 
         module_key = str(inputs["module_key"])
+        if inputs.get("dry_run"):
+            return ToolResult(
+                success=True,
+                data={
+                    "provider": self.provider,
+                    "dry_run": True,
+                    "course_id": course_id,
+                    "version_id": version_id,
+                    "module_key": module_key,
+                    "file": str(file_path),
+                    "base_url": base,
+                },
+            )
         upload_url = (
             f"{base}/api/courses/{course_id}/versions/{version_id}/media"
         )
