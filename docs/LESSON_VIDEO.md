@@ -6,7 +6,8 @@ OpenMontage TTS tool, the timeline is measured from the generated audio, and the
 deck is rendered by the `LessonVideo` Remotion composition.
 
 ```
-module JSON ──▶ TTS per slide ──▶ ffprobe timeline ──▶ captions ──▶ Remotion LessonVideo ──▶ MP4
+module JSON ──▶ TTS per slide ──▶ ffprobe timeline ──▶ avatar track + lip sync
+            └─▶ course context (bb_exam) ──▶ b-roll sourcing ──▶ Remotion LessonVideo ──▶ MP4
 ```
 
 ## Why it exists
@@ -53,6 +54,7 @@ renderer ships with OpenMontage and the only external requirements are Node,
 | Input | Default | Notes |
 |---|---|---|
 | `module_path` | — | required |
+| `source_path` | auto next to the module | `bb_exam_source.json`: course description, module position, passing threshold |
 | `output_path` | `<id>.mp4` | narration is cached in `<id>-lesson-assets/` next to it |
 | `voice_provider` | `piper` | `azure`, `elevenlabs`, `openai` when keys are set |
 | `voice` | provider default | piper model, Azure short name, ElevenLabs voice id, OpenAI voice |
@@ -61,10 +63,53 @@ renderer ships with OpenMontage and the only external requirements are Node,
 | `caption_model` | `base` | faster-whisper model when transcription is used |
 | `theme` | `clean-professional` | any playbook theme in `remotion-composer/src/Root.tsx` |
 | `accent_color` | module / theme | `#RRGGBB` brand accent |
-| `portrait_path` + `presenter_layout` | none | still portrait in `pip-br`, `side-right`, `full` |
+| `portrait_path` + `presenter_layout` | none | lip-synced frame in `pip-br`, `side-right`, `full` |
+| `avatar_provider` | `auto` | `none` keeps a still portrait; `auto` lip-syncs when the service runs |
+| `avatar_engine` | `wav2lip` | `musetalk` / `sadtalker` are much slower; `wav2lip` is ~real time |
+| `broll_provider` | `auto` | `files`, `stock`, `generated`, `none` |
+| `broll_layout` | `panel` | `background` for a cinematic treatment |
+| `broll_scope` | `content` | `all` adds b-roll to objectives/recap too |
 | `music_path` + `music_volume` | none / 0.12 | one music bed under narration |
 | `show_assessment` | `true` | trailing knowledge-check cards |
 | `remotion_concurrency`, `timeout_seconds` | auto / 3600 | render tuning |
+
+## Presenter lip sync
+
+The tool concatenates per-slide narration plus the same padding the composition
+uses, appends silence for the knowledge check, and sends that single track to the
+local talking-head service (`TALKING_HEAD_SERVICE_URL`, default
+`http://localhost:8691`). The service animates the portrait with `wav2lip`, which
+runs at roughly real time on this workstation (a 6-minute lesson ≈ 4 minutes).
+The clip is muted and placed in the presenter frame; per-slide narration remains
+the audio source, so slide changes never break lip sync.
+
+If the service is down or the engine fails, the render continues with the still
+portrait and the report says so (`avatar: still` + a `warnings` entry). Narration
+is cached, so retrying the avatar does not re-pay for TTS.
+
+## B-roll
+
+`auto` tries, in order:
+
+1. a module-supplied `broll_path` (image or video, best control),
+2. Pexels stock footage when `PEXELS_API_KEY` is set,
+3. a local generated still (ComfyUI Qwen-Image/FLUX, or Unsloth Studio) with a slow push-in.
+
+Content slides get a right-hand panel by default; `background` places the media
+full-bleed behind a scrim. Video clips are trimmed and muted to the slide length,
+images are staged as-is with a Ken Burns push. `broll.provider` in the report says
+which source actually ran.
+
+Without a key, a running ComfyUI, or supplied files the render continues without
+b-roll and records one warning explaining how to enable it.
+
+## Course information
+
+The title slide shows the course title, level, module position, course
+description, knowledge-check count and passing threshold. Those come from
+`bb_exam_source.json` (written by BrainBook Studio when a course module is
+chosen); the module's own `courseTitle` / `level` / `moduleIndex` /
+`moduleTotal` are the fallback. Nothing is retyped by hand.
 
 ## Captions
 
@@ -78,10 +123,11 @@ Three modes, reported back in `data.captions`:
 
 ## Cost and speed
 
-Piper narration and Remotion frames are local and free. A 30 s module renders in
-under a minute; a 6–8 minute module takes a few minutes, dominated by Remotion
-frames. Narration is cached, so re-rendering after a layout change does not pay
-for TTS again.
+Piper narration, wav2lip and Remotion frames are local and free. Budget roughly
+narration × 0.3 for TTS, narration × 0.6 for lip sync, plus Remotion time. A 45 s
+module renders in about a minute; a 6–8 minute module takes several minutes.
+Narration and the avatar clip are cached in `<id>-lesson-assets/`, so re-rendering
+after a layout change does not pay for either again.
 
 ## Delivery
 

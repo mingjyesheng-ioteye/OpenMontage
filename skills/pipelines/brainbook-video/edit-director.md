@@ -29,18 +29,27 @@ Say this explicitly in `decision_log` rather than silently narrowing the choice.
   "rate": 1.0,
   "captions": "auto",
   "caption_words_per_page": 4,
-  "presenter": { "layout": "pip-br", "portrait_path": "…" },
+  "presenter": { "layout": "pip-br", "portrait_path": "…",
+                 "name": "Avery Quinn", "role": "Training Instructor" },
+  "avatar": { "provider": "auto", "engine": "wav2lip" },
+  "broll": { "provider": "auto", "layout": "panel", "scope": "content" },
   "music": { "path": "…", "volume": 0.12 },
   "theme": "clean-professional",
+  "course_source": "artifacts/bb_exam_source.json",
   "output": "assets/video/<module>.mp4"
 }
 ```
 
 ## Rules
 
-- **Presenter** is a still portrait in a frame (`pip-br`, `side-right`), not a
-  lip-synced avatar. If the brief promised lip sync, record
-  `missing_capabilities: ["lip_sync"]` and offer the avatar pipeline instead.
+- **Presenter** is lip-synced when the talking-head service is running; the
+  renderer falls back to the still portrait and says so. `avatar_provider: none`
+  keeps it still on purpose.
+- **B-roll** is a source decision: `files` (module paths), `stock` (Pexels key),
+  `generated` (ComfyUI stills), or `auto`. Panel framing keeps text readable;
+  `background` is for cinematic treatments only.
+- **Course context** travels in `bb_exam_source.json`; never retype it into the
+  module. If the file is absent, the module's course fields are the fallback.
 - **Captions** are burned in by the renderer; `captions: "none"` is valid when
   the LMS player owns caption display.
 - **Music** is a single bed at ≤ 0.15 volume, or omitted. It never replaces
@@ -53,6 +62,7 @@ Say this explicitly in `decision_log` rather than silently narrowing the choice.
 ## Quality Gate
 
 - every decision maps to a `lesson_video` input,
-- the presenter/music/caption choices match `asset_manifest.json`,
+- the presenter/b-roll/caption choices match `asset_manifest.json`,
+- the course source is named and exists (or the omission is deliberate),
 - the output path and filename follow the publish naming rule,
 - rejected runtimes carry a reason.

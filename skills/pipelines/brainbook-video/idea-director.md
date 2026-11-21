@@ -64,15 +64,16 @@ Record these choices in the brief — they become provider inputs at compose:
 | Choice | Default | Alternatives |
 |---|---|---|
 | Voice | `piper` / `en_US-lessac-medium` (local, free) | `azure` (`en-US-AndrewMultilingualNeural`), `elevenlabs`, `openai` |
-| Presenter | `pip-br` still portrait | `side-right`, `full`, `none`; lip-sync is **not** supported here |
+| Presenter | `pip-br` with lip sync (`wav2lip`) | still portrait (`avatar_provider: none`), `side-right`, `full` |
 | Captions | `auto` (word-level) | `none` |
 | Music | `none` | any music bed file at ≤ 0.15 volume |
-| B-roll | `none` | not supported by the lesson renderer |
+| B-roll | `auto` (stock → local stills, content slides) | `none`, `stock`, `generated`, `files` |
 
-Only promise a provider that is actually available. Local piper is always the
-safe default; cloud voices need their key in the OpenMontage `.env`. Lip-synced
-avatar video is a different pipeline (`avatar-spokesperson`) — say so now, not
-after the render.
+Only promise a provider that is actually available. Local piper and the local
+talking-head service are the safe defaults; cloud voices need their key. B-roll
+auto mode uses stock footage when `PEXELS_API_KEY` is set, otherwise local
+ComfyUI stills when the server is running, and a module-supplied `broll_path`
+always wins. Say which mode will actually run.
 
 ### 3. Build the brief
 

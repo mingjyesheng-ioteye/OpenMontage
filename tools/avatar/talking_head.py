@@ -96,6 +96,17 @@ class TalkingHead(BaseTool):
                 "default": "crop",
                 "description": "Face preprocessing mode",
             },
+            "engine": {
+                "type": "string",
+                "enum": ["auto", "wav2lip", "musetalk", "sadtalker", "latentsync"],
+                "default": "auto",
+                "description": (
+                    "Talking-head service engine. wav2lip is the fastest "
+                    "(~2.5x realtime on this workstation); musetalk and sadtalker "
+                    "are much slower; latentsync depends on the host GPU stack. "
+                    "'auto' uses the service default."
+                ),
+            },
         },
     }
 
@@ -227,6 +238,9 @@ class TalkingHead(BaseTool):
             "portrait_b64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
             "audio_b64": base64.b64encode(audio_path.read_bytes()).decode("ascii"),
         }
+        engine = str(inputs.get("engine") or "auto")
+        if engine != "auto":
+            payload["engine"] = engine
 
         job_id = None
         for _ in range(60):
@@ -287,6 +301,7 @@ class TalkingHead(BaseTool):
                 "backend": "service",
                 "service_url": service,
                 "job_id": job_id,
+                "engine": engine,
                 "image": str(image_path),
                 "audio": str(audio_path),
                 "output": str(output_path),

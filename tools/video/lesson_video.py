@@ -22,6 +22,7 @@ the content.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import secrets
@@ -205,6 +206,242 @@ def _provider_word_timings(data: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 
 # ----------------------------------------------------------------------
+# Media helpers (avatar track, b-roll trimming)
+# ----------------------------------------------------------------------
+
+_SAMPLE_RATE = 24000
+
+
+def _load_repo_env() -> None:
+    """Load OpenMontage's .env so stock/avatar keys are visible."""
+    try:
+        from tools.base_tool import _load_dotenv
+
+        _load_dotenv()
+    except Exception:  # noqa: BLE001 - keys are optional here
+        pass
+
+
+def _ffmpeg(args: list[str], timeout: int = 600) -> bool:
+    if shutil.which("ffmpeg") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _to_wav(source: Path, destination: Path) -> bool:
+    return _ffmpeg([
+        "-y", "-i", str(source), "-vn", "-ac", "1", "-ar", str(_SAMPLE_RATE),
+        "-c:a", "pcm_s16le", str(destination),
+    ])
+
+
+def _silence_wav(destination: Path, duration_ms: int) -> bool:
+    if duration_ms <= 0:
+        return False
+    return _ffmpeg([
+        "-y", "-f", "lavfi", "-i",
+        f"anullsrc=r={_SAMPLE_RATE}:cl=mono",
+        "-t", f"{duration_ms / 1000:.3f}", "-c:a", "pcm_s16le", str(destination),
+    ])
+
+
+def _build_narration_track(
+    timeline: list[dict[str, Any]],
+    quiz_ms: int,
+    work_dir: Path,
+    output_path: Path,
+) -> bool:
+    """Concatenate narration + silence so the avatar matches the video timeline.
+
+    Each slide contributes its narration audio followed by the same padding the
+    composition uses; the knowledge-check section contributes silence. The
+    result is one continuous track whose length equals the rendered video.
+    """
+    segments_dir = work_dir / "avatar-track"
+    segments_dir.mkdir(parents=True, exist_ok=True)
+    segments: list[Path] = []
+    for position, item in enumerate(timeline, start=1):
+        audio_file: Path | None = item.get("audio_file")
+        audio_ms = _ffprobe_duration_ms(audio_file) if audio_file else 0
+        if audio_file is not None and audio_ms:
+            segment = segments_dir / f"s{position:02d}.wav"
+            if not segment.exists() and not _to_wav(audio_file, segment):
+                return False
+            segments.append(segment)
+        gap = int(item["durationMs"]) - audio_ms
+        if gap > 0:
+            silence = segments_dir / f"gap{position:02d}.wav"
+            if not silence.exists() and not _silence_wav(silence, gap):
+                return False
+            segments.append(silence)
+    if quiz_ms > 0:
+        silence = segments_dir / "quiz.wav"
+        if not silence.exists() and not _silence_wav(silence, quiz_ms):
+            return False
+        segments.append(silence)
+    if not segments:
+        return False
+
+    concat_list = segments_dir / "concat.txt"
+    concat_list.write_text(
+        "".join(f"file '{segment.as_posix()}'\n" for segment in segments),
+        encoding="utf-8",
+    )
+    os.makedirs(output_path.parent, exist_ok=True)
+    return _ffmpeg([
+        "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+        "-c", "copy", str(output_path),
+    ])
+
+
+def _trim_broll(source: Path, destination: Path, duration_ms: int, width: int = 1280) -> bool:
+    """Loop/trim a clip to the slide length, strip audio, normalise the width."""
+    seconds = max(1.0, duration_ms / 1000)
+    return _ffmpeg([
+        "-y", "-stream_loop", "-1", "-i", str(source), "-t", f"{seconds:.3f}",
+        "-an", "-vf", f"scale={width}:-2:flags=lanczos",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", str(destination),
+    ], timeout=900)
+
+
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _normalize_comfy_url() -> None:
+    """WSL resolves ``localhost`` to ::1, which the Windows ComfyUI doesn't bind."""
+    for key in ("COMFYUI_SERVER_URL", "COMFYUI_IMAGE_SERVER_URL"):
+        value = os.environ.get(key)
+        if value and "localhost" in value:
+            os.environ[key] = value.replace("localhost", "127.0.0.1")
+
+
+def _comfy_image_family(tool: Any) -> str | None:
+    """First ComfyUI image family whose models are fully installed."""
+    try:
+        from tools.graphics.comfyui_image import _MODEL_FAMILIES
+    except Exception:  # noqa: BLE001 - optional module
+        return None
+    for family, spec in _MODEL_FAMILIES.items():
+        try:
+            if not tool._client.check_models(spec["required_models"])[1]:
+                return family
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _generate_broll_image(prompt: str, output_path: Path) -> bool:
+    """Local still for the b-roll panel (ComfyUI first, then Unsloth Studio)."""
+    _normalize_comfy_url()
+    try:
+        from tools.graphics.comfyui_image import ComfyUIImage
+
+        tool = ComfyUIImage()
+        if tool.get_status() != ToolStatus.UNAVAILABLE:
+            inputs: dict[str, Any] = {
+                "prompt": prompt,
+                "width": 1024,
+                "height": 1024,
+                "steps": 8,
+                "output_path": str(output_path),
+            }
+            family = _comfy_image_family(tool)
+            if family:
+                inputs["model_family"] = family
+            result = tool.execute(inputs)
+            if result.success and output_path.is_file():
+                return True
+    except Exception:  # noqa: BLE001 - fall through to the Studio backend
+        pass
+
+    try:
+        from tools.graphics.unsloth_image import UnslothImage
+
+        studio = UnslothImage()
+        if studio.get_status() == ToolStatus.AVAILABLE:
+            result = studio.execute({
+                "prompt": prompt,
+                "width": 1024,
+                "height": 1024,
+                "steps": 8,
+                "output_path": str(output_path),
+            })
+            return bool(result.success and output_path.is_file())
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _course_context(
+    module: dict[str, Any],
+    source: dict[str, Any] | None,
+    questions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge course information from the module and a bb_exam source payload."""
+    source = source or {}
+    module_source = source.get("module") or {}
+    objectives = module.get("objectives") or module_source.get("objectives") or []
+    passing = (
+        module.get("passingPercent")
+        or (module.get("assessment") or {}).get("passingPercent")
+        or source.get("passing_percent")
+        or source.get("passing_threshold")
+        or (module.get("assessment") or {}).get("passing_percent")
+    )
+    if isinstance(passing, (int, float)) and 0 < passing <= 1:
+        passing = round(passing * 100)
+    module_index = (
+        module.get("moduleIndex")
+        or module_source.get("module_index")
+        or module_source.get("order")
+        or source.get("module_index")
+    )
+    module_total = module.get("moduleTotal") or source.get("module_total")
+    return {
+        "title": (
+            source.get("course_title")
+            or module.get("courseTitle")
+            or module.get("course_title")
+        ),
+        "description": (
+            source.get("course_description")
+            or module.get("courseDescription")
+            or module.get("course_description")
+        ),
+        "level": module.get("level") or module_source.get("level"),
+        "moduleIndex": module_index,
+        "moduleTotal": module_total,
+        "summary": module_source.get("summary") or module.get("moduleSummary"),
+        "objectives": objectives if isinstance(objectives, list) else [],
+        "passingPercent": passing,
+        "quizCount": len(questions),
+    }
+
+
+def _read_source(module_path: Path, explicit: str | None) -> dict[str, Any] | None:
+    candidate = Path(str(explicit)).expanduser() if explicit else module_path.parent / "bb_exam_source.json"
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() / candidate).resolve()
+    if not candidate.is_file():
+        return None
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+# ----------------------------------------------------------------------
 # Narration
 # ----------------------------------------------------------------------
 
@@ -294,6 +531,8 @@ def _normalize_slides(module: dict[str, Any]) -> list[dict[str, Any]]:
             "sub": (str(slide["sub"]).strip() if slide.get("sub") else None),
             "bullets": _slide_bullets(slide),
             "narration": _slide_text(slide),
+            "broll_path": slide.get("broll_path") or slide.get("broll"),
+            "broll_query": slide.get("broll_query"),
             "_index": index,
         })
     return normalized
@@ -325,23 +564,26 @@ class LessonVideo(BaseTool):
     )
     agent_skills = ["text-to-speech", "ffmpeg"]
 
-    capabilities = ["lesson_video_render", "narrated_slides", "word_captions"]
+    capabilities = ["lesson_video_render", "narrated_slides", "word_captions", "lip_sync", "broll"]
     supports = {
         "script_to_video": True,
         "captions": True,
         "music": True,
         "quiz": True,
         "presenter": True,
-        "avatar": False,
+        "avatar": True,
+        "lip_sync": True,
+        "broll": True,
+        "course_info": True,
     }
     best_for = [
         "BrainBook-branded lesson modules from a signed-off module JSON",
         "narrated training decks with word-level captions and a knowledge check",
-        "local, offline renders through piper + Remotion",
+        "a lip-synced presenter and stock b-roll on the same local render",
     ]
     not_good_for = [
         "shot-by-shot cinematic video (use the cinematic pipeline)",
-        "talking-head lip-sync video (use the avatar pipeline)",
+        "multi-speaker conversation video (this renderer is one presenter)",
     ]
     fallback = "video_compose"
     fallback_tools = ["video_compose", "remotion_caption_burn"]
@@ -400,6 +642,20 @@ class LessonVideo(BaseTool):
                 "description": "Music bed level under narration (default 0.12)",
             },
             "portrait_path": {"type": "string", "description": "Optional presenter portrait"},
+            "avatar_provider": {
+                "type": "string",
+                "enum": ["auto", "none"],
+                "description": (
+                    "auto (default): lip-sync the portrait with the talking-head "
+                    "service when it is running, else fall back to a still frame. "
+                    "none: still portrait only."
+                ),
+            },
+            "avatar_engine": {
+                "type": "string",
+                "enum": ["wav2lip", "musetalk", "sadtalker"],
+                "description": "Talking-head engine (default wav2lip, the fastest)",
+            },
             "presenter_layout": {
                 "type": "string",
                 "enum": ["none", "pip-br", "side-right", "full"],
@@ -407,6 +663,32 @@ class LessonVideo(BaseTool):
             },
             "presenter_name": {"type": "string"},
             "presenter_role": {"type": "string"},
+            "broll_provider": {
+                "type": "string",
+                "enum": ["auto", "none", "stock", "generated", "files"],
+                "description": (
+                    "auto (default): supplied file, then stock footage when a "
+                    "Pexels/Pixabay key exists, then local ComfyUI stills. "
+                    "Each mode can be forced; files uses module broll_path."
+                ),
+            },
+            "broll_layout": {
+                "type": "string",
+                "enum": ["panel", "background"],
+                "description": "How b-roll is framed on content slides (default panel)",
+            },
+            "broll_scope": {
+                "type": "string",
+                "enum": ["content", "all"],
+                "description": "Which slides get b-roll (default content)",
+            },
+            "source_path": {
+                "type": "string",
+                "description": (
+                    "Optional bb_exam_source.json with course description, module "
+                    "position and passing threshold. Auto-detected next to the module."
+                ),
+            },
             "theme": {
                 "type": "string",
                 "description": "Playbook/theme name resolved by the Remotion composer",
@@ -476,11 +758,47 @@ class LessonVideo(BaseTool):
         info = super().get_info()
         info["render_composition"] = "LessonVideo"
         info["tts_providers"] = self._available_tts()
+        info["avatar_service"] = self._avatar_available()
+        info["broll_sources"] = self._broll_sources()
         info["status_reason"] = (
             "" if self.get_status() == ToolStatus.AVAILABLE
             else "needs Node/npx + remotion-composer, ffmpeg/ffprobe, and a TTS provider"
         )
         return info
+
+    @staticmethod
+    def _avatar_available() -> bool:
+        try:
+            from tools.avatar.talking_head import TalkingHead
+
+            return TalkingHead().get_status() == ToolStatus.AVAILABLE
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
+    def _broll_sources() -> list[str]:
+        """Which b-roll sources this host can actually use right now."""
+        sources = ["files"]
+        _load_repo_env()
+        if os.environ.get("PEXELS_API_KEY") or os.environ.get("PIXABAY_API_KEY"):
+            sources.append("stock")
+        try:
+            from tools.graphics.comfyui_image import ComfyUIImage
+
+            _normalize_comfy_url()
+            if ComfyUIImage().get_status() != ToolStatus.UNAVAILABLE:
+                sources.append("generated")
+        except Exception:  # noqa: BLE001
+            pass
+        if "generated" not in sources:
+            try:
+                from tools.graphics.unsloth_image import UnslothImage
+
+                if UnslothImage().get_status() == ToolStatus.AVAILABLE:
+                    sources.append("generated")
+            except Exception:  # noqa: BLE001
+                pass
+        return sources
 
     def estimate_cost(self, inputs: dict[str, Any]) -> float:
         return 0.0  # piper + Remotion are local; cloud voices bill in their own tool
@@ -616,6 +934,217 @@ class LessonVideo(BaseTool):
             })
 
         # --------------------------------------------------------------
+        # Knowledge check + course context
+        # --------------------------------------------------------------
+        assessment = module.get("assessment") or None
+        questions: list[dict[str, Any]] = []
+        for question in (assessment or {}).get("questions") or []:
+            if not isinstance(question, dict):
+                continue
+            prompt = question.get("q") or question.get("prompt") or question.get("question")
+            options = question.get("options") or []
+            if not prompt or not isinstance(options, list):
+                continue
+            options = [
+                str(option.get("text") if isinstance(option, dict) else option)
+                for option in options
+            ]
+            answer = question.get("answer")
+            questions.append({
+                "q": str(prompt),
+                "options": options,
+                "answer": answer if isinstance(answer, int) else None,
+            })
+
+        show_assessment = inputs.get("show_assessment", True) is not False
+        quiz_seconds = float(inputs.get("quiz_seconds") or 7)
+        quiz_ms = round(len(questions) * quiz_seconds * 1000) if show_assessment else 0
+
+        source_payload = _read_source(module_path, inputs.get("source_path"))
+        course = _course_context(module, source_payload, questions)
+
+        # --------------------------------------------------------------
+        # Presenter lip sync — one clip across the whole narration track
+        # --------------------------------------------------------------
+        portrait = inputs.get("portrait_path")
+        layout = str(inputs.get("presenter_layout") or "")
+        avatar_provider = str(inputs.get("avatar_provider") or "auto").lower()
+        avatar_engine = str(inputs.get("avatar_engine") or "wav2lip").lower()
+        avatar_file: Path | None = None
+        avatar_seconds = 0.0
+        avatar_used = "none"
+
+        if avatar_provider == "auto" and portrait and layout != "none":
+            portrait_file = Path(str(portrait)).expanduser()
+            if not portrait_file.is_absolute():
+                portrait_file = (Path.cwd() / portrait_file).resolve()
+            expected_ms = sum(int(item["durationMs"]) for item in timeline) + quiz_ms
+            candidate = assets_dir / "avatar.mp4"
+            existing_ms = _ffprobe_duration_ms(candidate) if candidate.is_file() else None
+            if candidate.is_file() and existing_ms and abs(existing_ms - expected_ms) < 1200:
+                avatar_file = candidate
+                avatar_used = "cached"
+            else:
+                track = assets_dir / "avatar-track.wav"
+                if not track.is_file() or track.stat().st_size == 0:
+                    built = _build_narration_track(timeline, quiz_ms, assets_dir, track)
+                    if not built:
+                        warnings.append("avatar: could not build the narration track")
+                if track.is_file():
+                    try:
+                        from tools.avatar.talking_head import TalkingHead
+
+                        talking_head = TalkingHead()
+                        if talking_head.get_status() != ToolStatus.AVAILABLE:
+                            warnings.append(
+                                "avatar: talking-head service unavailable; using a still portrait"
+                            )
+                        else:
+                            avatar_started = time.time()
+                            result = talking_head.execute({
+                                "image_path": str(portrait_file),
+                                "audio_path": str(track),
+                                "output_path": str(candidate),
+                                "engine": avatar_engine,
+                            })
+                            avatar_seconds = round(time.time() - avatar_started, 1)
+                            if result.success and candidate.is_file():
+                                avatar_file = candidate
+                                avatar_used = avatar_engine
+                            else:
+                                warnings.append(
+                                    "avatar: lip sync failed "
+                                    f"({(result.error or 'unknown error')[:180]}); using a still portrait"
+                                )
+                    except Exception as exc:  # noqa: BLE001 - never block the lesson
+                        warnings.append(f"avatar: lip sync error ({type(exc).__name__}: {exc})")
+
+        # --------------------------------------------------------------
+        # B-roll — supplied files, stock footage, or local generated stills
+        # --------------------------------------------------------------
+        broll_provider = str(inputs.get("broll_provider") or "auto").lower()
+        broll_layout = str(inputs.get("broll_layout") or "panel").lower()
+        broll_scope = str(inputs.get("broll_scope") or "content").lower()
+        broll_dir = assets_dir / "broll"
+        broll_dir.mkdir(parents=True, exist_ok=True)
+        # index -> (path, "video" | "image")
+        broll_sources: dict[int, tuple[Path, str]] = {}
+        broll_cache: dict[str, tuple[Path, str] | None] = {}
+        broll_modes: set[str] = set()
+
+        if broll_provider != "none":
+            _load_repo_env()
+            stock_available = broll_provider in ("auto", "stock") and bool(
+                os.environ.get("PEXELS_API_KEY") or os.environ.get("PIXABAY_API_KEY")
+            )
+            generate_allowed = broll_provider in ("auto", "generated")
+            comfy_ready = generate_allowed and "generated" in self._broll_sources()
+
+            selected = [
+                index
+                for index, slide in enumerate(slides)
+                if (broll_scope == "all" and slide["kind"] != "title")
+                or (broll_scope == "content" and slide["kind"] == "content")
+            ]
+            for index in selected:
+                slide = slides[index]
+                supplied = slide.get("broll_path")
+                if supplied:
+                    candidate = Path(str(supplied)).expanduser()
+                    if not candidate.is_absolute():
+                        candidate = (module_path.parent / candidate).resolve()
+                    if candidate.is_file():
+                        kind = "image" if candidate.suffix.lower() in _IMAGE_SUFFIXES else "video"
+                        broll_sources[index] = (candidate, kind)
+                        broll_modes.add("files")
+                        continue
+                    warnings.append(f"broll: supplied clip not found: {candidate}")
+
+                query = str(slide.get("broll_query") or slide["heading"]).strip()
+                if not query:
+                    continue
+
+                # 1) stock footage
+                if stock_available:
+                    key = f"stock:{query}"
+                    if key not in broll_cache:
+                        digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:10]
+                        clip = broll_dir / f"stock-{digest}.mp4"
+                        resolved: tuple[Path, str] | None = None
+                        if clip.is_file() and clip.stat().st_size > 0:
+                            resolved = (clip, "video")
+                        else:
+                            try:
+                                from tools.video.pexels_video import PexelsVideo
+
+                                pexels = PexelsVideo()
+                                if pexels.get_status() == ToolStatus.AVAILABLE:
+                                    result = pexels.execute({
+                                        "query": query,
+                                        "orientation": "landscape",
+                                        "size": "medium",
+                                        "preferred_quality": "hd",
+                                        "max_duration": 30,
+                                        "output_path": str(clip),
+                                    })
+                                    if result.success and clip.is_file():
+                                        resolved = (clip, "video")
+                                        broll_modes.add("stock")
+                                    else:
+                                        warnings.append(
+                                            f"broll: no stock clip for {query!r} "
+                                            f"({(result.error or '')[:120]})"
+                                        )
+                            except Exception as exc:  # noqa: BLE001
+                                warnings.append(
+                                    f"broll: stock search error for {query!r} "
+                                    f"({type(exc).__name__})"
+                                )
+                        broll_cache[key] = resolved
+                    cached = broll_cache.get(key)
+                    if cached is not None:
+                        broll_sources[index] = cached
+                        continue
+
+                # 2) local generated still (ComfyUI)
+                if generate_allowed and comfy_ready:
+                    key = f"image:{query}"
+                    if key not in broll_cache:
+                        digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:10]
+                        image = broll_dir / f"still-{digest}.png"
+                        resolved = None
+                        if image.is_file() and image.stat().st_size > 0:
+                            resolved = (image, "image")
+                        else:
+                            prompt = (
+                                "Editorial photograph for a professional training video"
+                                + (f" about {course.get('title')}" if course.get("title") else "")
+                                + f": {slide['heading']}."
+                                + (f" {slide['sub']}." if slide.get("sub") else "")
+                                + " Natural light, realistic, shallow depth of field, "
+                                  "candid, no text, no logos, no watermarks."
+                            )
+                            if _generate_broll_image(prompt, image):
+                                resolved = (image, "image")
+                                broll_modes.add("generated")
+                            else:
+                                warnings.append(
+                                    f"broll: still generation failed for {query!r}"
+                                )
+                        broll_cache[key] = resolved
+                    cached = broll_cache.get(key)
+                    if cached is not None:
+                        broll_sources[index] = cached
+                        continue
+
+            if not broll_sources and broll_provider in ("auto", "stock", "generated"):
+                if not stock_available and not comfy_ready:
+                    warnings.append(
+                        "broll: no source available (add PEXELS_API_KEY, start ComfyUI, "
+                        "or supply broll_path per slide)"
+                    )
+
+        # --------------------------------------------------------------
         # Stage media for Remotion (staticFile paths are public-relative)
         # --------------------------------------------------------------
         token = secrets.token_hex(4)
@@ -624,17 +1153,41 @@ class LessonVideo(BaseTool):
         props_path = output_path.parent / f".lesson-props-{module_id}-{token}.json"
         cleanup = True
 
+        broll_used = 0
+
         try:
             for position, item in enumerate(timeline, start=1):
-                source: Path | None = item.pop("audio_file")
+                audio_source: Path | None = item.pop("audio_file")
                 caption_words = item.pop("caption_words")
                 item["captionWords"] = caption_words
-                if source is None:
+                if audio_source is None:
                     item["audioSrc"] = None
-                    continue
-                name = f"{module_id}-s{position:02d}{source.suffix}"
-                shutil.copy2(source, public_dir / name)
-                item["audioSrc"] = name
+                else:
+                    name = f"{module_id}-s{position:02d}{audio_source.suffix}"
+                    shutil.copy2(audio_source, public_dir / name)
+                    item["audioSrc"] = name
+
+                supplied = broll_sources.get(position - 1)
+                if supplied is not None:
+                    broll_path, broll_kind = supplied
+                    if broll_kind == "image":
+                        name = f"broll-s{position:02d}{broll_path.suffix.lower()}"
+                        shutil.copy2(broll_path, public_dir / name)
+                        item["brollSrc"] = name
+                        item["brollKind"] = "image"
+                        item["brollLayout"] = broll_layout
+                        broll_used += 1
+                    else:
+                        name = f"broll-s{position:02d}.mp4"
+                        if _trim_broll(broll_path, public_dir / name, int(item["durationMs"])):
+                            item["brollSrc"] = name
+                            item["brollKind"] = "video"
+                            item["brollLayout"] = broll_layout
+                            broll_used += 1
+                        else:
+                            warnings.append(
+                                f"broll: could not trim {broll_path.name} for slide {position}"
+                            )
 
             music_src = None
             music_path = inputs.get("music_path")
@@ -650,8 +1203,6 @@ class LessonVideo(BaseTool):
                 music_src = f"music{music_file.suffix}"
 
             presenter = None
-            portrait = inputs.get("portrait_path")
-            layout = str(inputs.get("presenter_layout") or "")
             if portrait and layout != "none":
                 portrait_file = Path(str(portrait)).expanduser()
                 if not portrait_file.is_absolute():
@@ -667,39 +1218,23 @@ class LessonVideo(BaseTool):
                     "name": inputs.get("presenter_name") or "",
                     "role": inputs.get("presenter_role") or "",
                 }
+                if avatar_file is not None:
+                    shutil.copy2(avatar_file, public_dir / "avatar.mp4")
+                    presenter["videoSrc"] = "avatar.mp4"
             elif layout and layout != "none":
                 warnings.append("presenter: layout requested without a portrait; skipped")
-
-            assessment = module.get("assessment") or None
-            questions = []
-            for question in (assessment or {}).get("questions") or []:
-                if not isinstance(question, dict):
-                    continue
-                prompt = question.get("q") or question.get("prompt") or question.get("question")
-                options = question.get("options") or []
-                if not prompt or not isinstance(options, list):
-                    continue
-                options = [
-                    str(option.get("text") if isinstance(option, dict) else option)
-                    for option in options
-                ]
-                answer = question.get("answer")
-                questions.append({
-                    "q": str(prompt),
-                    "options": options,
-                    "answer": answer if isinstance(answer, int) else None,
-                })
 
             fps = int(inputs.get("fps") or 30)
             width = int(inputs.get("width") or 1920)
             height = int(inputs.get("height") or 1080)
             props: dict[str, Any] = {
                 "brand": module.get("brand"),
-                "courseTitle": module.get("courseTitle"),
+                "courseTitle": course.get("title") or module.get("courseTitle"),
                 "moduleTitle": module.get("moduleTitle"),
-                "level": module.get("level"),
-                "moduleIndex": module.get("moduleIndex"),
-                "moduleTotal": module.get("moduleTotal"),
+                "level": course.get("level") or module.get("level"),
+                "moduleIndex": course.get("moduleIndex") or module.get("moduleIndex"),
+                "moduleTotal": course.get("moduleTotal") or module.get("moduleTotal"),
+                "course": course,
                 "theme": inputs.get("theme") or "clean-professional",
                 "accentColor": inputs.get("accent_color")
                 or (module.get("presenter") or {}).get("accentColor"),
@@ -708,10 +1243,10 @@ class LessonVideo(BaseTool):
                 "musicVolume": float(inputs.get("music_volume") or 0.12),
                 "presenter": presenter,
                 "assessment": {"questions": questions} if questions else None,
-                "showAssessment": inputs.get("show_assessment", True) is not False,
+                "showAssessment": show_assessment,
                 "captions": captions_mode != "none",
                 "wordsPerPage": int(inputs.get("caption_words_per_page") or 4),
-                "quizSeconds": float(inputs.get("quiz_seconds") or 7),
+                "quizSeconds": quiz_seconds,
                 "fps": fps,
                 "width": width,
                 "height": height,
@@ -775,7 +1310,7 @@ class LessonVideo(BaseTool):
                 "model": "lesson-video-remotion",
                 "output": str(output_path),
                 "module_id": module_id,
-                "course_title": module.get("courseTitle"),
+                "course_title": course.get("title") or module.get("courseTitle"),
                 "module_title": module.get("moduleTitle"),
                 "slides": len(timeline),
                 "slide_durations_ms": [item["durationMs"] for item in timeline],
@@ -786,6 +1321,24 @@ class LessonVideo(BaseTool):
                 "captions": caption_kind,
                 "caption_words": words_total,
                 "assessment_questions": len(questions),
+                "course": {
+                    "title": course.get("title"),
+                    "description": bool(course.get("description")),
+                    "module_position": (
+                        f"{course.get('moduleIndex')} of {course.get('moduleTotal')}"
+                        if course.get("moduleIndex")
+                        else None
+                    ),
+                    "passing_percent": course.get("passingPercent"),
+                },
+                "avatar": avatar_used,
+                "avatar_seconds": avatar_seconds,
+                "broll": {
+                    "provider": "+".join(sorted(broll_modes)) or "none",
+                    "requested": broll_provider,
+                    "clips": broll_used,
+                    "layout": broll_layout if broll_used else None,
+                },
                 "presenter": presenter["layout"] if presenter else "none",
                 "music": "bed" if music_src else "none",
                 "assets_dir": str(assets_dir),

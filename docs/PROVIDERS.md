@@ -1437,16 +1437,23 @@ Setup, auth, and the either/or workflow are documented in
 Renders a lesson module JSON (slides + narration + assessment) natively in
 OpenMontage — no external renderer checkout:
 
-1. narration per slide through an OpenMontage TTS tool — `piper` locally by
+1. course context from `bb_exam_source.json` (description, module position,
+   passing threshold) on the title slide;
+2. narration per slide through an OpenMontage TTS tool — `piper` locally by
    default, or `azure` / `elevenlabs` / `openai` when their keys are configured;
-2. timeline from real `ffprobe` durations (+ ~0.55 s per slide);
-3. word-level captions from provider alignment (ElevenLabs), else
+3. timeline from real `ffprobe` durations (+ ~0.55 s per slide);
+4. a lip-synced presenter: one narration track drives the local talking-head
+   service (`wav2lip`), muted and framed as a presenter pip; a still portrait is
+   the fallback;
+5. b-roll from supplied files, Pexels stock (`PEXELS_API_KEY`), or local ComfyUI
+   stills, in a content panel or full-bleed;
+6. word-level captions from provider alignment (ElevenLabs), else
    `transcriber` / faster-whisper, else proportional word timing (reported as
    such);
-4. a Remotion render of the `LessonVideo` composition
+7. a Remotion render of the `LessonVideo` composition
    (`remotion-composer/src/LessonVideo.tsx`): title / objectives / content /
-   recap slides, optional presenter frame, progress bar, and knowledge-check
-   cards from `assessment.questions`.
+   recap slides, progress bar, and knowledge-check cards from
+   `assessment.questions`.
 
 The `brainbook-video` pipeline authors the module across `idea → script →
 scene_plan → assets → edit` and calls `lesson_video` once at `compose`.

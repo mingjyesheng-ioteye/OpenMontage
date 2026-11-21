@@ -4,6 +4,7 @@ import {
   Audio,
   CalculateMetadataFunction,
   Img,
+  OffthreadVideo,
   Sequence,
   interpolate,
   spring,
@@ -34,6 +35,10 @@ export type LessonSlide = {
   durationMs: number;
   /** Caption words relative to this slide's start. */
   captionWords?: WordCaption[];
+  /** public/-relative b-roll clip, already trimmed to this slide. */
+  brollSrc?: string | null;
+  brollKind?: "video" | "image";
+  brollLayout?: "panel" | "background";
 };
 
 export type LessonQuestion = {
@@ -44,9 +49,24 @@ export type LessonQuestion = {
 
 export type LessonPresenter = {
   portraitSrc?: string | null;
+  /** Lip-synced presenter clip (audio-driven); takes precedence over the still. */
+  videoSrc?: string | null;
   name?: string;
   role?: string;
   layout?: "pip-br" | "side-right" | "full";
+};
+
+/** Course context rendered on the title slide and in the header. */
+export type LessonCourseInfo = {
+  title?: string;
+  description?: string;
+  level?: string;
+  moduleIndex?: number;
+  moduleTotal?: number;
+  summary?: string;
+  objectives?: string[];
+  passingPercent?: number;
+  quizCount?: number;
 };
 
 export type LessonProps = {
@@ -64,6 +84,8 @@ export type LessonProps = {
   musicSrc?: string | null;
   musicVolume?: number;
   presenter?: LessonPresenter | null;
+  /** Course context (title, description, stats) from bb_exam or the module. */
+  course?: LessonCourseInfo;
   assessment?: { passingPercent?: number; questions?: LessonQuestion[] } | null;
   showAssessment?: boolean;
   captions?: boolean;
@@ -254,6 +276,36 @@ const SlideCounter: React.FC<{ index: number; total: number; theme: ThemeConfig 
 // Slide bodies
 // ---------------------------------------------------------------------------
 
+const StatChip: React.FC<{
+  label: string;
+  value: string;
+  theme: ThemeConfig;
+  accent: string;
+}> = ({ label, value, theme, accent }) => (
+  <div
+    style={{
+      padding: "14px 22px",
+      borderRadius: 16,
+      background: alpha(theme.surfaceColor, 0.9),
+      border: `1px solid ${alpha(accent, 0.22)}`,
+      minWidth: 150,
+    }}
+  >
+    <div
+      style={{
+        fontSize: 13,
+        letterSpacing: 2.5,
+        textTransform: "uppercase",
+        color: theme.mutedTextColor,
+        marginBottom: 4,
+      }}
+    >
+      {label}
+    </div>
+    <div style={{ fontSize: 26, fontWeight: 700, color: theme.textColor }}>{value}</div>
+  </div>
+);
+
 const TitleSlide: React.FC<{
   slide: LessonSlide;
   theme: ThemeConfig;
@@ -261,16 +313,41 @@ const TitleSlide: React.FC<{
   brand?: string;
   courseTitle?: string;
   level?: string;
-}> = ({ slide, theme, accent, brand, courseTitle, level }) => {
+  course?: LessonCourseInfo;
+}> = ({ slide, theme, accent, brand, courseTitle, level, course }) => {
   const headline = useEnter(0);
   const sub = useEnter(8);
   const rule = useEnter(14);
+
+  const courseLabel = course?.title || courseTitle || brand || "";
+  const moduleIndex = course?.moduleIndex;
+  const moduleTotal = course?.moduleTotal;
+  const chips: Array<{ label: string; value: string }> = [];
+  if (course?.level || level) {
+    chips.push({ label: "Level", value: clampText(course?.level || level, 24) });
+  }
+  if (typeof moduleIndex === "number") {
+    chips.push({
+      label: "Module",
+      value: moduleTotal ? `${moduleIndex} of ${moduleTotal}` : String(moduleIndex),
+    });
+  }
+  if (course?.quizCount) {
+    chips.push({
+      label: "Knowledge check",
+      value: `${course.quizCount} question${course.quizCount === 1 ? "" : "s"}`,
+    });
+  }
+  if (course?.passingPercent) {
+    chips.push({ label: "Passing", value: `${Math.round(course.passingPercent)}%` });
+  }
+
   return (
     <div
       style={{
         position: "absolute",
         inset: 0,
-        padding: "200px 140px 160px",
+        padding: "150px 140px 150px",
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
@@ -282,7 +359,7 @@ const TitleSlide: React.FC<{
           display: "flex",
           alignItems: "center",
           gap: 16,
-          marginBottom: 34,
+          marginBottom: 30,
           ...headline,
         }}
       >
@@ -295,7 +372,7 @@ const TitleSlide: React.FC<{
             color: accent,
           }}
         >
-          {clampText(courseTitle || brand || "", 64)}
+          {clampText(courseLabel, 64)}
         </span>
         {level ? (
           <span
@@ -315,7 +392,7 @@ const TitleSlide: React.FC<{
       <h1
         style={{
           margin: 0,
-          fontSize: 104,
+          fontSize: 92,
           fontWeight: 700,
           lineHeight: 1.06,
           letterSpacing: -2,
@@ -329,8 +406,8 @@ const TitleSlide: React.FC<{
       {slide.sub ? (
         <p
           style={{
-            margin: "36px 0 0",
-            fontSize: 40,
+            margin: "30px 0 0",
+            fontSize: 36,
             fontWeight: 400,
             lineHeight: 1.35,
             color: theme.mutedTextColor,
@@ -341,9 +418,45 @@ const TitleSlide: React.FC<{
           {clampText(slide.sub, 180)}
         </p>
       ) : null}
+      {course?.description ? (
+        <p
+          style={{
+            margin: "24px 0 0",
+            fontSize: 28,
+            fontWeight: 400,
+            lineHeight: 1.45,
+            color: alpha(theme.textColor, 0.78),
+            maxWidth: 1180,
+            ...sub,
+          }}
+        >
+          {clampText(course.description, 260)}
+        </p>
+      ) : null}
+      {chips.length ? (
+        <div
+          style={{
+            display: "flex",
+            gap: 16,
+            marginTop: 34,
+            flexWrap: "wrap",
+            ...rule,
+          }}
+        >
+          {chips.map((chip) => (
+            <StatChip
+              key={chip.label}
+              label={chip.label}
+              value={chip.value}
+              theme={theme}
+              accent={accent}
+            />
+          ))}
+        </div>
+      ) : null}
       <div
         style={{
-          marginTop: 52,
+          marginTop: 40,
           width: 160,
           height: 8,
           borderRadius: 4,
@@ -436,6 +549,97 @@ const BulletList: React.FC<{
   </div>
 );
 
+const BrollMedia: React.FC<{
+  src: string;
+  kind: "video" | "image";
+  layout: "panel" | "background";
+  theme: ThemeConfig;
+}> = ({ src, kind, layout, theme }) => {
+  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+  const progress = interpolate(frame, [0, Math.max(1, durationInFrames)], [0, 1], {
+    extrapolateRight: "clamp",
+  });
+
+  const Media = () =>
+    kind === "image" ? (
+      <Img
+        src={staticFile(src)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: `scale(${1.02 + progress * 0.1})`,
+        }}
+      />
+    ) : (
+      <OffthreadVideo
+        src={staticFile(src)}
+        muted
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: `scale(${1.04 + progress * 0.05})`,
+        }}
+      />
+    );
+
+  if (layout === "background") {
+    return (
+      <>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            overflow: "hidden",
+          }}
+        >
+          <Media />
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: `linear-gradient(90deg, ${alpha(theme.backgroundColor, 0.96)} 0%, ${alpha(
+              theme.backgroundColor,
+              0.82,
+            )} 52%, ${alpha(theme.backgroundColor, 0.35)} 100%)`,
+          }}
+        />
+      </>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 158,
+        right: 96,
+        bottom: 132,
+        width: "38%",
+        borderRadius: 30,
+        overflow: "hidden",
+        boxShadow: `0 30px 70px ${alpha("#000000", 0.22)}`,
+        border: `1px solid ${alpha(theme.textColor, 0.1)}`,
+      }}
+    >
+      <Media />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `linear-gradient(120deg, ${alpha(theme.backgroundColor, 0.12)}, ${alpha(
+            theme.backgroundColor,
+            0,
+          )})`,
+        }}
+      />
+    </div>
+  );
+};
+
 const BodySlide: React.FC<{
   slide: LessonSlide;
   theme: ThemeConfig;
@@ -446,6 +650,10 @@ const BodySlide: React.FC<{
   const headline = useEnter(0);
   const lead = useEnter(6);
   const bullets = (slide.bullets || []).filter((b) => b && b.trim());
+  const hasBroll = Boolean(slide.brollSrc);
+  const brollLayout = slide.brollLayout || "panel";
+  const panel = hasBroll && brollLayout === "panel";
+
   return (
     <div
       style={{
@@ -455,8 +663,17 @@ const BodySlide: React.FC<{
         display: "flex",
         flexDirection: "column",
         fontFamily,
+        overflow: "hidden",
       }}
     >
+      {hasBroll && brollLayout === "background" ? (
+        <BrollMedia
+          src={slide.brollSrc as string}
+          kind={slide.brollKind || "video"}
+          layout="background"
+          theme={theme}
+        />
+      ) : null}
       {tinted ? (
         <div
           style={{
@@ -468,11 +685,24 @@ const BodySlide: React.FC<{
           }}
         />
       ) : null}
-      <div style={{ position: "relative" }}>
+      {panel ? (
+        <BrollMedia
+          src={slide.brollSrc as string}
+          kind={slide.brollKind || "video"}
+          layout="panel"
+          theme={theme}
+        />
+      ) : null}
+      <div
+        style={{
+          position: "relative",
+          maxWidth: panel ? "52%" : undefined,
+        }}
+      >
         <h2
           style={{
             margin: 0,
-            fontSize: 66,
+            fontSize: panel ? 58 : 66,
             fontWeight: 700,
             lineHeight: 1.14,
             letterSpacing: -1,
@@ -487,7 +717,7 @@ const BodySlide: React.FC<{
           <p
             style={{
               margin: "24px 0 0",
-              fontSize: 34,
+              fontSize: panel ? 30 : 34,
               lineHeight: 1.4,
               color: theme.mutedTextColor,
               maxWidth: 1220,
@@ -503,6 +733,7 @@ const BodySlide: React.FC<{
             theme={theme}
             accent={accent}
             numbered={numbered}
+            fontSize={panel ? 34 : 40}
           />
         ) : null}
       </div>
@@ -678,7 +909,7 @@ const Presenter: React.FC<{
     extrapolateRight: "clamp",
   });
 
-  if (!presenter.portraitSrc) return null;
+  if (!presenter.portraitSrc && !presenter.videoSrc) return null;
 
   if (presenter.layout === "side-right" || presenter.layout === "full") {
     const width = presenter.layout === "full" ? 520 : 440;
@@ -693,15 +924,23 @@ const Presenter: React.FC<{
           overflow: "hidden",
         }}
       >
-        <Img
-          src={staticFile(presenter.portraitSrc)}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            transform: `scale(${1.02 + progress * 0.06})`,
-          }}
-        />
+        {presenter.videoSrc ? (
+          <OffthreadVideo
+            src={staticFile(presenter.videoSrc)}
+            muted
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <Img
+            src={staticFile(presenter.portraitSrc as string)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: `scale(${1.02 + progress * 0.06})`,
+            }}
+          />
+        )}
         <div
           style={{
             position: "absolute",
@@ -745,15 +984,23 @@ const Presenter: React.FC<{
         boxShadow: `0 24px 60px ${alpha("#000000", 0.35)}`,
       }}
     >
-      <Img
-        src={staticFile(presenter.portraitSrc)}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          transform: `scale(${1.04 + progress * 0.05})`,
-        }}
-      />
+      {presenter.videoSrc ? (
+        <OffthreadVideo
+          src={staticFile(presenter.videoSrc)}
+          muted
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      ) : (
+        <Img
+          src={staticFile(presenter.portraitSrc as string)}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            transform: `scale(${1.04 + progress * 0.05})`,
+          }}
+        />
+      )}
       <div
         style={{
           position: "absolute",
@@ -862,6 +1109,7 @@ export const LessonVideo: React.FC<LessonProps> = (props) => {
                   brand={props.brand}
                   courseTitle={props.courseTitle}
                   level={props.level}
+                  course={props.course}
                 />
               ) : (
                 <BodySlide
@@ -928,7 +1176,7 @@ export const LessonVideo: React.FC<LessonProps> = (props) => {
         theme={theme}
         accent={accent}
       />
-      {presenter?.portraitSrc ? (
+      {presenter?.portraitSrc || presenter?.videoSrc ? (
         <Presenter presenter={presenter} theme={theme} accent={accent} />
       ) : null}
       <Progress accent={accent} theme={theme} />

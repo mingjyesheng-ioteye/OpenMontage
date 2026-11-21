@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tools.video.lesson_video import (
     LessonVideo,
+    _course_context,
     _estimated_word_timings,
     _normalize_slides,
     _provider_word_timings,
@@ -58,6 +59,68 @@ def test_slides_are_normalized_with_kind_and_bullets() -> None:
     assert [slide["kind"] for slide in slides] == ["objectives", "content", "content"]
     assert slides[0]["bullets"] == ["One", "Two"]
     assert slides[1]["bullets"] == []
+
+
+def test_slides_keep_broll_sources() -> None:
+    slides = _normalize_slides({
+        "slides": [{
+            "kind": "content",
+            "heading": "Observation",
+            "broll_path": "assets/classroom.png",
+            "broll_query": "classroom observation",
+        }]
+    })
+    assert slides[0]["broll_path"] == "assets/classroom.png"
+    assert slides[0]["broll_query"] == "classroom observation"
+
+
+def test_course_context_comes_from_the_bb_exam_source() -> None:
+    course = _course_context(
+        {
+            "courseTitle": "Old title",
+            "level": "Entry (E)",
+            "assessment": {"passingPercent": 80},
+        },
+        {
+            "course_title": "Understanding Behavior",
+            "course_description": "A practical course for support professionals.",
+            "module_index": 1,
+            "module_total": 7,
+            "passing_percent": 75,
+            "module": {
+                "summary": "Every behavior has a purpose.",
+                "objectives": ["Name the functions"],
+            },
+        },
+        [{"q": "Why?"}],
+    )
+    assert course["title"] == "Understanding Behavior"
+    assert course["description"].startswith("A practical course")
+    assert course["moduleIndex"] == 1
+    assert course["moduleTotal"] == 7
+    assert course["summary"] == "Every behavior has a purpose."
+    assert course["objectives"] == ["Name the functions"]
+    # A module-level passing threshold wins over the course default.
+    assert course["passingPercent"] == 80
+    assert course["quizCount"] == 1
+
+
+def test_course_context_falls_back_to_the_module() -> None:
+    course = _course_context(
+        {
+            "courseTitle": "Standalone",
+            "courseDescription": "Module-only description",
+            "level": "Advanced",
+            "moduleIndex": 3,
+            "moduleTotal": 5,
+        },
+        None,
+        [],
+    )
+    assert course["title"] == "Standalone"
+    assert course["description"] == "Module-only description"
+    assert course["moduleIndex"] == 3
+    assert course["quizCount"] == 0
 
 
 def test_tool_contract_is_renderable_without_an_external_checkout() -> None:

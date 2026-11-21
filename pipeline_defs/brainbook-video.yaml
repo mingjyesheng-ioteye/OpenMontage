@@ -4,8 +4,8 @@ description: >
   BrainBook Video — branded, narrated, captioned lesson videos from a course
   module. Authoring stages shape the module (slides, narration, assessment,
   presenter and sound plan); the compose stage renders it natively with
-  OpenMontage's `lesson_video` tool: per-slide TTS through an OpenMontage voice
-  provider, narration-driven timeline, word-level captions, and the Remotion
+  OpenMontage's `lesson_video` tool: course context from bb_exam, per-slide TTS,
+  a lip-synced presenter, b-roll, word-level captions, and the Remotion
   `LessonVideo` composition. Produces lesson.mp4 plus the quiz data.
 category: custom
 stability: beta
@@ -156,8 +156,10 @@ stages:
     human_approval_default: false
     review_focus:
       - The rendered MP4 exists and probes cleanly
-      - Narration, captions and slides are in sync
-      - Voice fallbacks and caption mode are recorded honestly
+      - Narration, lip sync, captions and slides are in sync
+      - Course information (description, module position, passing threshold) is visible
+      - B-roll appears on content slides and stays readable
+      - Voice/avatar/b-roll fallbacks and caption mode are recorded honestly
     success_criteria:
       - Schema-valid render_report artifact
       - Output file exists and includes narration and captions

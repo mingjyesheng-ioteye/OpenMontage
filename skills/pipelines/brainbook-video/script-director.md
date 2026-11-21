@@ -45,7 +45,8 @@ source does not support.
     { "kind": "objectives", "heading": "What you will be able to do",
       "bullets": ["…", "…"], "narration": "…" },
     { "kind": "content", "heading": "…", "sub": "…",
-      "bullets": ["Escape", "Attention"], "narration": "…" },
+      "bullets": ["Escape", "Attention"],
+      "broll_query": "support worker observing a learner", "narration": "…" },
     { "kind": "recap", "heading": "Recap",
       "bullets": ["…"], "narration": "…" }
   ],
@@ -58,9 +59,19 @@ source does not support.
 
 `bullets[]` (≤ 5) is the on-screen text; `narration` is spoken only. A slide with
 no narration renders as a still card for ~4.5 s (handy for a quiz-only slide).
+`broll_query` is an optional search phrase for stock/generated b-roll; a local
+file path in `broll_path` wins when provided.
 
 Do **not** hand-write `durationMs`, `audioSrc` or `captionWords` — `lesson_video`
 fills those during TTS/captioning.
+
+## Course Information
+
+Course description, module position, level and passing threshold come from the
+Studio source artifact (`artifacts/bb_exam_source.json`), which the renderer
+reads automatically. Do not copy those fields into the module by hand; if the
+project has no source, the module's own `courseTitle` / `level` /
+`moduleIndex` / `moduleTotal` are used.
 
 ## Narration Rules
 
