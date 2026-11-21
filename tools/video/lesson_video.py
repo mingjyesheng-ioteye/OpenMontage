@@ -965,62 +965,6 @@ class LessonVideo(BaseTool):
         course = _course_context(module, source_payload, questions)
 
         # --------------------------------------------------------------
-        # Presenter lip sync — one clip across the whole narration track
-        # --------------------------------------------------------------
-        portrait = inputs.get("portrait_path")
-        layout = str(inputs.get("presenter_layout") or "")
-        avatar_provider = str(inputs.get("avatar_provider") or "auto").lower()
-        avatar_engine = str(inputs.get("avatar_engine") or "wav2lip").lower()
-        avatar_file: Path | None = None
-        avatar_seconds = 0.0
-        avatar_used = "none"
-
-        if avatar_provider == "auto" and portrait and layout != "none":
-            portrait_file = Path(str(portrait)).expanduser()
-            if not portrait_file.is_absolute():
-                portrait_file = (Path.cwd() / portrait_file).resolve()
-            expected_ms = sum(int(item["durationMs"]) for item in timeline) + quiz_ms
-            candidate = assets_dir / "avatar.mp4"
-            existing_ms = _ffprobe_duration_ms(candidate) if candidate.is_file() else None
-            if candidate.is_file() and existing_ms and abs(existing_ms - expected_ms) < 1200:
-                avatar_file = candidate
-                avatar_used = "cached"
-            else:
-                track = assets_dir / "avatar-track.wav"
-                if not track.is_file() or track.stat().st_size == 0:
-                    built = _build_narration_track(timeline, quiz_ms, assets_dir, track)
-                    if not built:
-                        warnings.append("avatar: could not build the narration track")
-                if track.is_file():
-                    try:
-                        from tools.avatar.talking_head import TalkingHead
-
-                        talking_head = TalkingHead()
-                        if talking_head.get_status() != ToolStatus.AVAILABLE:
-                            warnings.append(
-                                "avatar: talking-head service unavailable; using a still portrait"
-                            )
-                        else:
-                            avatar_started = time.time()
-                            result = talking_head.execute({
-                                "image_path": str(portrait_file),
-                                "audio_path": str(track),
-                                "output_path": str(candidate),
-                                "engine": avatar_engine,
-                            })
-                            avatar_seconds = round(time.time() - avatar_started, 1)
-                            if result.success and candidate.is_file():
-                                avatar_file = candidate
-                                avatar_used = avatar_engine
-                            else:
-                                warnings.append(
-                                    "avatar: lip sync failed "
-                                    f"({(result.error or 'unknown error')[:180]}); using a still portrait"
-                                )
-                    except Exception as exc:  # noqa: BLE001 - never block the lesson
-                        warnings.append(f"avatar: lip sync error ({type(exc).__name__}: {exc})")
-
-        # --------------------------------------------------------------
         # B-roll — supplied files, stock footage, or local generated stills
         # --------------------------------------------------------------
         broll_provider = str(inputs.get("broll_provider") or "auto").lower()
@@ -1157,6 +1101,62 @@ class LessonVideo(BaseTool):
                         "broll: no source available (add PEXELS_API_KEY, start ComfyUI, "
                         "or supply broll_path per slide)"
                     )
+
+        # --------------------------------------------------------------
+        # Presenter lip sync — one clip across the whole narration track
+        # --------------------------------------------------------------
+        portrait = inputs.get("portrait_path")
+        layout = str(inputs.get("presenter_layout") or "")
+        avatar_provider = str(inputs.get("avatar_provider") or "auto").lower()
+        avatar_engine = str(inputs.get("avatar_engine") or "wav2lip").lower()
+        avatar_file: Path | None = None
+        avatar_seconds = 0.0
+        avatar_used = "none"
+
+        if avatar_provider == "auto" and portrait and layout != "none":
+            portrait_file = Path(str(portrait)).expanduser()
+            if not portrait_file.is_absolute():
+                portrait_file = (Path.cwd() / portrait_file).resolve()
+            expected_ms = sum(int(item["durationMs"]) for item in timeline) + quiz_ms
+            candidate = assets_dir / "avatar.mp4"
+            existing_ms = _ffprobe_duration_ms(candidate) if candidate.is_file() else None
+            if candidate.is_file() and existing_ms and abs(existing_ms - expected_ms) < 1200:
+                avatar_file = candidate
+                avatar_used = "cached"
+            else:
+                track = assets_dir / "avatar-track.wav"
+                if not track.is_file() or track.stat().st_size == 0:
+                    built = _build_narration_track(timeline, quiz_ms, assets_dir, track)
+                    if not built:
+                        warnings.append("avatar: could not build the narration track")
+                if track.is_file():
+                    try:
+                        from tools.avatar.talking_head import TalkingHead
+
+                        talking_head = TalkingHead()
+                        if talking_head.get_status() != ToolStatus.AVAILABLE:
+                            warnings.append(
+                                "avatar: talking-head service unavailable; using a still portrait"
+                            )
+                        else:
+                            avatar_started = time.time()
+                            result = talking_head.execute({
+                                "image_path": str(portrait_file),
+                                "audio_path": str(track),
+                                "output_path": str(candidate),
+                                "engine": avatar_engine,
+                            })
+                            avatar_seconds = round(time.time() - avatar_started, 1)
+                            if result.success and candidate.is_file():
+                                avatar_file = candidate
+                                avatar_used = avatar_engine
+                            else:
+                                warnings.append(
+                                    "avatar: lip sync failed "
+                                    f"({(result.error or 'unknown error')[:180]}); using a still portrait"
+                                )
+                    except Exception as exc:  # noqa: BLE001 - never block the lesson
+                        warnings.append(f"avatar: lip sync error ({type(exc).__name__}: {exc})")
 
         # --------------------------------------------------------------
         # Stage media for Remotion (staticFile paths are public-relative)
